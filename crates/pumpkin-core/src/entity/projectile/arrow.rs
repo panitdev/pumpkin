@@ -22,6 +22,9 @@ use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_util::version::JavaMinecraftVersion;
 
+/// Speed kept after bouncing off an unhurt target: `REVERSE` scales by 0.5, `onHitEntity` by 0.2.
+const DEFLECT_BOUNCE_SCALE: f64 = 0.5 * 0.2;
+
 /// Represents the pickup rules for arrows
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArrowPickup {
@@ -756,7 +759,10 @@ impl EntityBase for ArrowEntity {
             }
 
             let ebb = cand.get_entity().bounding_box.load().expand(0.3, 0.3, 0.3);
+            // Like vanilla `AABB.clip`, only a hit strictly ahead counts, so an arrow that starts
+            // inside or on a box (after bouncing off it) can't hit it again.
             if let Some(t) = calculate_ray_intersection(&start_pos, &velocity, &ebb)
+                && t > 0.0
                 && t < closest_t
             {
                 closest_t = t;
@@ -908,6 +914,7 @@ impl EntityBase for ArrowEntity {
                 let is_enderman =
                     target.get_entity().entity_type == &pumpkin_data::entity::EntityType::ENDERMAN;
                 let is_on_fire = entity.is_on_fire() || self.is_flame.load(Ordering::Relaxed);
+                let target_fire_ticks = target.get_entity().fire_ticks.load(Ordering::Relaxed);
                 if is_on_fire && !is_enderman {
                     target.get_entity().set_on_fire_for(5.0);
                 }
@@ -927,6 +934,31 @@ impl EntityBase for ArrowEntity {
                     owner_entity.as_deref(),
                     None,
                 );
+
+                // Vanilla bounces off anything it fails to hurt, such as creative players.
+                if !damage_succeeded {
+                    target
+                        .get_entity()
+                        .fire_ticks
+                        .store(target_fire_ticks, Ordering::Relaxed);
+                    let bounced = velocity.multiply(
+                        -DEFLECT_BOUNCE_SCALE,
+                        -DEFLECT_BOUNCE_SCALE,
+                        -DEFLECT_BOUNCE_SCALE,
+                    );
+                    if bounced.length_squared() < 1.0E-7 {
+                        entity.remove();
+                        return;
+                    }
+                    entity.set_pos(hit_pos);
+                    entity.velocity.store(bounced);
+                    self.pierced_entities
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .retain(|id| *id != target_entity_id);
+                    self.has_hit.store(false, Ordering::SeqCst);
+                    return;
+                }
 
                 if let Some(living) = target.get_living_entity() {
                     if punch > 0 {
