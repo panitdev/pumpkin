@@ -76,6 +76,8 @@ pub struct ThrownItemEntity {
     pub owner_id: Option<i32>,
     pub collides_with_projectiles: bool,
     pub has_hit: AtomicBool,
+    /// Vanilla `Projectile.leftOwner`: the owner can only be hit once this is set.
+    pub left_owner: AtomicBool,
     pub gravity: f64,
 }
 
@@ -89,6 +91,7 @@ impl ThrownItemEntity {
             owner_id: Some(owner.entity_id),
             collides_with_projectiles: false,
             has_hit: AtomicBool::new(false),
+            left_owner: AtomicBool::new(false),
             gravity,
         }
     }
@@ -160,6 +163,7 @@ impl ThrownItemEntity {
         let world = entity.world.load();
 
         entity.update_last_pos();
+        self.check_left_owner();
 
         let velocity = entity.velocity.load();
         let start_pos = entity.pos.load();
@@ -272,8 +276,7 @@ impl ThrownItemEntity {
             return true;
         }
 
-        // Skip owner for initial frames
-        if Some(other_ent.entity_id) == self.owner_id && self_ent.age.load(Ordering::Relaxed) < 5 {
+        if Some(other_ent.entity_id) == self.owner_id && !self.left_owner.load(Ordering::Relaxed) {
             return true;
         }
 
@@ -288,6 +291,29 @@ impl ThrownItemEntity {
         }
 
         false
+    }
+
+    /// Vanilla `Projectile.checkLeftOwner`: latches once the owner is out of reach.
+    fn check_left_owner(&self) {
+        if self.left_owner.load(Ordering::Relaxed) {
+            return;
+        }
+        let entity = self.get_entity();
+        let owner = self
+            .owner_id
+            .and_then(|id| entity.world.load().get_entity_by_id(id));
+        let left = owner.is_none_or(|owner| {
+            let velocity = entity.velocity.load();
+            let reach = entity
+                .bounding_box
+                .load()
+                .expand_towards(velocity.x, velocity.y, velocity.z)
+                .expand_all(1.0);
+            !reach.intersects(&owner.get_entity().bounding_box.load())
+        });
+        if left {
+            self.left_owner.store(true, Ordering::Relaxed);
+        }
     }
 
     const fn get_entity(&self) -> &Entity {
