@@ -8,7 +8,10 @@ use crate::{
     block::blocks::fire::{FireBlockBase, fire::FireBlock},
     entity::{
         Entity, EntityBase,
-        projectile::{ProjectileHit, ThrownItemEntity, fireball::INITIAL_ACCELERATION_POWER},
+        projectile::{
+            ProjectileHit, ThrownItemEntity,
+            fireball::{INITIAL_ACCELERATION_POWER, apply_inertia},
+        },
     },
     server::Server,
 };
@@ -51,7 +54,8 @@ impl EntityBase for SmallFireballEntity {
     }
 
     fn tick(&self, caller: &dyn EntityBase, _server: &Server) {
-        self.thrown.process_tick(caller);
+        apply_inertia(self.get_entity(), INITIAL_ACCELERATION_POWER);
+        self.thrown.move_and_collide(caller);
     }
 
     fn get_entity(&self) -> &Entity {

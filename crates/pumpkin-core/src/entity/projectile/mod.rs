@@ -137,9 +137,6 @@ impl ThrownItemEntity {
     /// Process a tick for projectile movement and collisions
     pub fn process_tick(&self, caller: &dyn EntityBase) {
         let entity = self.get_entity();
-        let world = entity.world.load();
-
-        entity.update_last_pos();
 
         // Apply gravity and inertia
         let mut velocity = entity.velocity.load();
@@ -151,10 +148,20 @@ impl ThrownItemEntity {
             0.99
         };
         velocity = velocity.multiply(inertia, inertia, inertia);
-
-        // Store velocity
         entity.velocity.store(velocity);
 
+        self.move_and_collide(caller);
+    }
+
+    /// Moves by the current velocity and handles hits, without gravity or drag. Hurting
+    /// projectiles such as fireballs apply their own inertia and call this directly.
+    pub fn move_and_collide(&self, caller: &dyn EntityBase) {
+        let entity = self.get_entity();
+        let world = entity.world.load();
+
+        entity.update_last_pos();
+
+        let velocity = entity.velocity.load();
         let start_pos = entity.pos.load();
         let delta = velocity;
 

@@ -23,6 +23,27 @@ pub const DEFAULT_EXPLOSION_POWER: f32 = 1.0;
 pub const AIR_INERTIA: f64 = 0.95;
 pub const WATER_INERTIA: f64 = 0.8;
 
+/// Mirrors `AbstractHurtingProjectile.applyInertia`: pushes along the current heading, then drags.
+pub fn apply_inertia(entity: &Entity, acceleration_power: f64) {
+    let velocity = entity.velocity.load();
+    if velocity.length() <= 1e-6 {
+        return;
+    }
+
+    let inertia = if entity.touching_water.load(Ordering::Relaxed) {
+        WATER_INERTIA
+    } else {
+        AIR_INERTIA
+    };
+    let accel = acceleration_power;
+    let velocity = velocity
+        .normalize()
+        .multiply(accel, accel, accel)
+        .add(&velocity)
+        .multiply(inertia, inertia, inertia);
+    entity.velocity.store(velocity);
+}
+
 pub struct FireballEntity {
     pub thrown: ThrownItemEntity,
     pub item_stack: RwLock<ItemStack>,
@@ -203,27 +224,8 @@ impl EntityBase for FireballEntity {
     }
 
     fn tick(&self, caller: &dyn EntityBase, _server: &Server) {
-        let entity = self.get_entity();
-        let mut velocity = entity.velocity.load();
-
-        let inertia = if entity.touching_water.load(Ordering::Relaxed) {
-            WATER_INERTIA
-        } else {
-            AIR_INERTIA
-        };
-
-        let accel = self.get_acceleration_power();
-        let speed = velocity.length();
-        if speed > 1e-6 {
-            let norm = velocity.normalize();
-            velocity = norm
-                .multiply(accel, accel, accel)
-                .add(&velocity)
-                .multiply(inertia, inertia, inertia);
-            entity.velocity.store(velocity);
-        }
-
-        self.thrown.process_tick(caller);
+        apply_inertia(self.get_entity(), self.get_acceleration_power());
+        self.thrown.move_and_collide(caller);
     }
 
     fn get_entity(&self) -> &Entity {
