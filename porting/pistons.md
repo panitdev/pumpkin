@@ -72,6 +72,11 @@
     `getUpdatePacket() != null`); pistons opt out. Verified in a 26.3 client against upstream
     HEAD at 4 TPS: before, the moved blocks vanish mid-move; after, they slide.
 
+16. **Moving piston block.** Removing it now deletes the extended base without effects (vanilla
+    `destroy`, no player-based break); using a moving piston with no block entity clears it
+    (`useWithoutItem`); breaking one drops the block it carries (`getDrops`), via a special case in
+    `World::break_block`.
+
 ## Still open
 
 - **Players aren't pushed** by moving blocks (existing choice: client-authoritative movement

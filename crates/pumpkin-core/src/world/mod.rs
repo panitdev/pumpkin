@@ -5296,7 +5296,22 @@ impl World {
                 killed_by_player: Some(cause.is_some()),
                 ..Default::default()
             };
-            crate::block::drop_loot(self, broken_block, position, true, &params);
+            // A moving piston drops whatever block it is carrying.
+            let mut loot_block = broken_block;
+            let mut params = params;
+            if broken_block == &Block::MOVING_PISTON {
+                let carried = self.get_block_entity(position).and_then(|entity| {
+                    entity
+                        .as_any()
+                        .downcast_ref::<crate::block::entities::piston::PistonBlockEntity>()
+                        .map(|piston| piston.pushed_block_state)
+                });
+                if let Some(carried) = carried {
+                    loot_block = carried.id.to_block();
+                    params.block_state = Some(carried);
+                }
+            }
+            crate::block::drop_loot(self, loot_block, position, true, &params);
         }
 
         let new_state_id = if broken_block.is_waterlogged(broken_block_state.id) {
