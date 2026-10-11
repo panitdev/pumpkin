@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "Pumpkin",
+  "project_id": "e79fa294-1516-4030-abe7-be45e9ffce57"
+}
