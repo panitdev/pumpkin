@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use crate::block::entities::{has_block_block_entity, piston::PistonBlockEntity};
 use crate::entity::EntityBase;
@@ -7,6 +8,7 @@ use pumpkin_data::{
     Block, BlockDirection, BlockState, BlockStateId, FacingExt,
     block_properties::{MovingPistonLikeProperties, PistonHeadLikeProperties, PistonType},
     block_state::PistonBehavior,
+    game_event::GameEvent,
     sound::{Sound, SoundCategory},
 };
 use pumpkin_util::math::position::BlockPos;
@@ -38,15 +40,32 @@ impl BlockMetadata for PistonBlock {
 impl PistonBlock {
     #[must_use]
     pub fn is_movable(
+        world: &World,
+        pos: &BlockPos,
         block: &Block,
         state: &BlockState,
         dir: BlockDirection,
         can_break: bool,
         piston_dir: BlockDirection,
     ) -> bool {
-        // TODO: more checks
+        let y = pos.0.y;
+        if !world.is_in_height_limit(y)
+            || !world
+                .worldborder
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains_block(pos.0.x, pos.0.z)
+        {
+            return false;
+        }
         if state.is_air() {
             return true;
+        }
+        // Nothing can be pushed out of the bottom or top of the world.
+        if (dir == BlockDirection::Down && y == world.get_bottom_y())
+            || (dir == BlockDirection::Up && y == world.get_top_y())
+        {
+            return false;
         }
         // Vanilla hardcoded them aswell
         if block == &Block::OBSIDIAN
@@ -106,7 +125,11 @@ impl BlockBehaviour for PistonBlock {
     }
 
     fn placed(&self, args: PlacedArgs<'_>) {
-        if args.old_state_id == args.state_id {
+        // Only when the block itself changed (not just `extended`) and no moving block entity is
+        // still sitting here.
+        if Block::from_state_id(args.old_state_id) == args.block
+            || args.world.get_block_entity(args.position).is_some()
+        {
             return;
         }
         try_move(args.world, args.block, args.position);
@@ -187,6 +210,7 @@ impl PistonBlock {
                 0.5,
                 pitch,
             );
+            world.emit_game_event(GameEvent::BlockActivate.name(), pos.to_centered_f64());
             return true;
         }
         // Reduce Piston
@@ -218,65 +242,76 @@ impl PistonBlock {
         } else {
             PistonType::Normal
         };
+        let moving_state_id = props.to_state_id(&Block::MOVING_PISTON);
 
         world.set_block_state(
             pos,
-            props.to_state_id(&Block::MOVING_PISTON),
-            BlockFlags::NOTIFY_ALL | BlockFlags::FORCE_STATE,
+            moving_state_id,
+            BlockFlags::NOTIFY_LISTENERS | BlockFlags::FORCE_STATE,
         );
 
         let mut props = PistonProps::default(block);
-        props.facing = BlockDirection::by_index((data & 7) as usize)
+        props.facing = BlockDirection::from_index(data & 7)
             .unwrap_or(BlockDirection::North)
             .to_facing();
 
-        world.add_block_entity(Arc::new(PistonBlockEntity {
-            position: *pos,
-            facing: dir,
-            pushed_block_state: BlockState::from_id(props.to_state_id(block)),
-            current_progress: 0.0.into(),
-            last_progress: 0.0.into(),
-            extending: false,
-            source: true,
-        }));
+        world.add_block_entity(Arc::new(PistonBlockEntity::new(
+            *pos,
+            BlockState::from_id(props.to_state_id(block)),
+            dir,
+            false,
+            true,
+        )));
 
-        world.set_block_state(
-            &extended_pos,
-            Block::AIR.default_state.id,
-            BlockFlags::NOTIFY_ALL | BlockFlags::FORCE_STATE,
-        );
+        world.update_neighbors_at(pos, &Block::MOVING_PISTON, None);
+        world
+            .block_registry
+            .update_neighbors(world, pos, BlockFlags::NOTIFY_LISTENERS);
 
-        world.update_neighbors(pos, None);
         if sticky {
             let pull_pos = pos.offset_dir(dir.to_offset(), 2);
-            let (block, state) = world.get_block_and_state(&pull_pos);
-            if data == 2 {
-                world.set_block_state(
-                    &extended_pos,
-                    Block::AIR.default_state.id,
-                    BlockFlags::NOTIFY_ALL,
-                );
+            let (pull_block, pull_state) = world.get_block_and_state(&pull_pos);
+
+            // A block still being pushed out by this piston (a pulse shorter than the
+            // extension) is snapped into place and left behind instead of being pulled back.
+            let dropped_block = if pull_block == &Block::MOVING_PISTON
+                && let Some(block_entity) = world.get_block_entity(&pull_pos)
+                && let Some(piston) = block_entity.as_any().downcast_ref::<PistonBlockEntity>()
+                && piston.facing == dir
+                && piston.extending
+            {
+                piston.finish(world);
+                true
             } else {
-                let is_air = state.is_air();
-                if !is_air
-                    && (Self::is_movable(block, state, dir, false, dir.opposite())
-                        || Self::is_movable(block, state, dir, false, dir))
-                    && (state.piston_behavior == PistonBehavior::Normal
-                        || block == &Block::PISTON
-                        || block == &Block::STICKY_PISTON)
+                false
+            };
+
+            if !dropped_block {
+                if r#type != 1
+                    || pull_state.is_air()
+                    || !Self::is_movable(
+                        world,
+                        &pull_pos,
+                        pull_block,
+                        pull_state,
+                        dir.opposite(),
+                        false,
+                        dir,
+                    )
+                    || (pull_state.piston_behavior != PistonBehavior::Normal
+                        && pull_block != &Block::PISTON
+                        && pull_block != &Block::STICKY_PISTON)
                 {
-                    move_piston(world, dir, pos, false, sticky);
-                } else {
-                    // remove
                     world.set_block_state(
                         &extended_pos,
                         Block::AIR.default_state.id,
                         BlockFlags::NOTIFY_ALL,
                     );
+                } else {
+                    move_piston(world, dir, pos, false, sticky);
                 }
             }
         } else {
-            // remove
             world.set_block_state(
                 &extended_pos,
                 Block::AIR.default_state.id,
@@ -292,6 +327,7 @@ impl PistonBlock {
             0.5,
             pitch,
         );
+        world.emit_game_event(GameEvent::BlockDeactivate.name(), pos.to_centered_f64());
         true
     }
 }
@@ -338,24 +374,22 @@ pub fn try_move(world: &Arc<World>, _block: &Block, block_pos: &BlockPos) {
     } else if !should_extent && props.extended {
         let new_pos = block_pos.offset_dir(dir.to_offset(), 2);
         let (new_block, new_state) = world.get_block_and_state_id(&new_pos);
-        let mut r#type = 1;
 
-        if new_block == &Block::MOVING_PISTON {
-            let new_props = MovingPistonLikeProperties::from_state_id(new_state);
-            if new_props.facing == props.facing
-                && let Some(entity) = world.get_block_entity(&new_pos)
-            {
-                let Some(piston) = entity.as_any().downcast_ref::<PistonBlockEntity>() else {
-                    return;
-                };
-                if piston.extending && piston.current_progress.load() < 0.5
-                // TODO: more stuff...
-                {
-                    // Piston reduced too quickly, if its a stick piston no blocks will be dragged
-                    r#type = 2;
-                }
-            }
-        }
+        // The block in front is still being pushed out: retracting now drops it there instead
+        // of pulling it back.
+        let r#type = if new_block == &Block::MOVING_PISTON
+            && MovingPistonLikeProperties::from_state_id(new_state).facing == props.facing
+            && let Some(entity) = world.get_block_entity(&new_pos)
+            && let Some(piston) = entity.as_any().downcast_ref::<PistonBlockEntity>()
+            && piston.extending
+            && (piston.last_progress.load() < 0.5
+                || world.get_world_age() == piston.last_ticked.load(Ordering::Relaxed)
+                || world.handling_tick.load(Ordering::Relaxed))
+        {
+            2
+        } else {
+            1
+        };
         world.add_synced_block_event(*block_pos, r#type, dir.to_index());
     }
 }
@@ -423,15 +457,13 @@ fn move_piston(
         );
 
         if let Some(moved_state) = moved_block_states.get(moved_blocks.len() - 1 - index) {
-            world.add_block_entity(Arc::new(PistonBlockEntity {
-                position: target_pos,
-                facing: dir.to_facing().to_block_direction(),
-                pushed_block_state: moved_state,
-                current_progress: 0.0.into(),
-                last_progress: 0.0.into(),
-                extending: extend,
-                source: false,
-            }));
+            world.add_block_entity(Arc::new(PistonBlockEntity::new(
+                target_pos,
+                moved_state,
+                dir,
+                extend,
+                false,
+            )));
         }
         affected_block_states.push(block_state);
     }
@@ -454,15 +486,13 @@ fn move_piston(
         let mut props = PistonHeadLikeProperties::default(&Block::PISTON_HEAD);
         props.facing = dir.to_facing();
         props.r#type = pistion_type;
-        world.add_block_entity(Arc::new(PistonBlockEntity {
-            position: extended_pos,
-            facing: dir.to_facing().to_block_direction(),
-            pushed_block_state: BlockState::from_id(props.to_state_id(&Block::PISTON_HEAD)),
-            current_progress: 0.0.into(),
-            last_progress: 0.0.into(),
-            extending: true,
-            source: true,
-        }));
+        world.add_block_entity(Arc::new(PistonBlockEntity::new(
+            extended_pos,
+            BlockState::from_id(props.to_state_id(&Block::PISTON_HEAD)),
+            dir,
+            true,
+            true,
+        )));
     }
 
     let air_state = Block::AIR.default_state.id;

@@ -274,6 +274,8 @@ pub struct World {
     pub block_registry: Arc<BlockRegistry>,
     pub server: Weak<Server>,
     synced_block_event_queue: std::sync::Mutex<Vec<BlockEvent>>,
+    /// Vanilla `ServerLevel.isHandlingTick`: set while scheduled block and fluid ticks run.
+    pub handling_tick: std::sync::atomic::AtomicBool,
     /// A map of unsent block changes, keyed by block position.
     unsent_block_changes: std::sync::Mutex<HashMap<BlockPos, BlockStateId>>,
     /// Persisted vanilla POI storage for portal and villager lookups.
@@ -416,6 +418,7 @@ impl World {
             sea_level: generation_settings.sea_level,
             min_y: i32::from(generation_settings.shape.min_y),
             synced_block_event_queue: std::sync::Mutex::new(Vec::new()),
+            handling_tick: std::sync::atomic::AtomicBool::new(false),
             unsent_block_changes: std::sync::Mutex::new(HashMap::new()),
             portal_poi: std::sync::Mutex::new(portal_poi),
             villager_poi: std::sync::Mutex::new(villager_poi::VillagerPoiStorage::default()),
@@ -1751,6 +1754,7 @@ impl World {
                     &pumpkin_protocol::bedrock::client::CUpdateBlock::new(block_pos, be_block_id),
                 );
                 if let Some(block_entity) = self.get_block_entity(&block_pos)
+                    && block_entity.sends_update_packet()
                     && let Some(nbt) = block_entity.chunk_data_nbt()
                 {
                     let bytes = pumpkin_nbt::Nbt::from(nbt).write_unnamed();
@@ -1824,6 +1828,7 @@ impl World {
 
                 for (block_pos, _) in &updates {
                     if let Some(block_entity) = self.get_block_entity(block_pos)
+                        && block_entity.sends_update_packet()
                         && let Some(nbt) = block_entity.chunk_data_nbt()
                     {
                         let bytes = pumpkin_nbt::Nbt::from(nbt).write_unnamed();
@@ -1968,6 +1973,7 @@ impl World {
         let handle = server.runtime.clone();
 
         // 1. Parallel Block Ticks via Rayon
+        self.handling_tick.store(true, Relaxed);
         let world = self.clone();
         let block_handle = handle.clone();
         tick_data
@@ -2006,6 +2012,8 @@ impl World {
                     }
                 }
             });
+
+        self.handling_tick.store(false, Relaxed);
 
         // 3. Parallel Random Ticks via Rayon
         let world = self.clone();
@@ -6254,7 +6262,9 @@ impl World {
         let block_entity_nbt = block_entity.chunk_data_nbt();
         let entity_id = block_entity.resource_location().to_string();
 
-        if let Some(nbt) = &block_entity_nbt {
+        if let Some(nbt) = &block_entity_nbt
+            && block_entity.sends_update_packet()
+        {
             let bytes = pumpkin_nbt::Nbt::from(nbt.clone()).write_unnamed();
             self.broadcast_to_chunk(
                 chunk_pos,
@@ -6352,15 +6362,17 @@ impl World {
         let block_entity_nbt = block_entity.chunk_data_nbt();
 
         if let Some(nbt) = &block_entity_nbt {
-            let bytes = pumpkin_nbt::Nbt::from(nbt.clone()).write_unnamed();
-            self.broadcast_to_chunk(
-                chunk_pos,
-                &CBlockEntityData::new(
-                    block_entity.get_position(),
-                    VarInt(block_entity.get_id() as i32),
-                    bytes.as_ref().into(),
-                ),
-            );
+            if block_entity.sends_update_packet() {
+                let bytes = pumpkin_nbt::Nbt::from(nbt.clone()).write_unnamed();
+                self.broadcast_to_chunk(
+                    chunk_pos,
+                    &CBlockEntityData::new(
+                        block_entity.get_position(),
+                        VarInt(block_entity.get_id() as i32),
+                        bytes.as_ref().into(),
+                    ),
+                );
+            }
             let mut full_nbt = nbt.clone();
             full_nbt.put_string("id", block_entity.resource_location().to_string());
             let pos = block_entity.get_position();

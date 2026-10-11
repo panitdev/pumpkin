@@ -117,6 +117,12 @@ pub trait BlockEntity: Any + Send + Sync {
         None
     }
 
+    /// Whether changes are sent as a block entity data packet (vanilla `getUpdatePacket` is not
+    /// null). Block entities the client simulates itself opt out; they are still in `ChunkData`.
+    fn sends_update_packet(&self) -> bool {
+        true
+    }
+
     /// Obtain block actor NBT for fields Bedrock does not include in its block state.
     fn bedrock_block_actor_data(&self, _state_id: BlockStateId) -> Option<NbtCompound> {
         None

@@ -1,8 +1,8 @@
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use crossbeam::atomic::AtomicCell;
-use pumpkin_data::{Block, BlockDirection, BlockState};
+use pumpkin_data::{Block, BlockDirection, BlockState, block_properties::Axis};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3};
 
@@ -18,10 +18,32 @@ pub struct PistonBlockEntity {
     pub last_progress: AtomicCell<f32>,
     pub extending: bool,
     pub source: bool,
+    /// World age of the last tick, vanilla `lastTicked`.
+    pub last_ticked: AtomicI64,
 }
 
 impl PistonBlockEntity {
     pub const ID: &'static str = "minecraft:piston";
+
+    #[must_use]
+    pub fn new(
+        position: BlockPos,
+        pushed_block_state: &'static BlockState,
+        facing: BlockDirection,
+        extending: bool,
+        source: bool,
+    ) -> Self {
+        Self {
+            position,
+            pushed_block_state,
+            facing,
+            current_progress: 0.0.into(),
+            last_progress: 0.0.into(),
+            extending,
+            source,
+            last_ticked: AtomicI64::new(0),
+        }
+    }
 
     const fn movement_direction(&self) -> BlockDirection {
         if self.extending {
@@ -90,6 +112,19 @@ impl PistonBlockEntity {
                 continue;
             }
 
+            // Slime blocks launch whatever they hit along the push axis.
+            if self.pushed_block_state.id.to_block() == &Block::SLIME_BLOCK {
+                let mut velocity = e.velocity.load();
+                let step = Self::dir_vec(motion_dir, 1.0);
+                match motion_dir.to_axis() {
+                    Axis::X => velocity.x = step.x,
+                    Axis::Y => velocity.y = step.y,
+                    Axis::Z => velocity.z = step.z,
+                }
+                e.velocity.store(velocity);
+                e.velocity_dirty.store(true, Ordering::Relaxed);
+            }
+
             let entity_aabb = e.bounding_box.load();
             let intersection = Self::intersection_size(swept, motion_dir, entity_aabb);
             if intersection <= 0.0 {
@@ -105,6 +140,44 @@ impl PistonBlockEntity {
             // block position (it replaces the piston during animation).
             if !self.extending && self.source {
                 Self::push_out_of_piston_body(e, &self.position, motion_dir, delta);
+            }
+        }
+    }
+
+    /// Vanilla `moveStuckEntities`: a honey block moving sideways carries the entities standing
+    /// on it.
+    fn move_stuck_entities(&self, world: &Arc<World>, new_progress: f32) {
+        if self.pushed_block_state.id.to_block() != &Block::HONEY_BLOCK {
+            return;
+        }
+        let motion_dir = self.movement_direction();
+        if motion_dir.to_axis() == Axis::Y {
+            return;
+        }
+        let delta = f64::from(new_progress - self.last_progress.load());
+        let amount = f64::from(self.amount_extended(self.last_progress.load()));
+        let base = self.position.to_f64() + Self::dir_vec(self.facing, amount);
+        // Honey's collision shape tops out at 15/16.
+        let area = BoundingBox::new(
+            base + Vector3::new(0.0, 15.0 / 16.0, 0.0),
+            base + Vector3::new(1.0, 1.500_001, 1.0),
+        );
+        for entity in world.get_entities_at_box(&area) {
+            let e = entity.get_entity();
+            if entity.get_player().is_some()
+                || e.no_physics.load(Ordering::Relaxed)
+                || !e.on_ground.load(Ordering::Relaxed)
+            {
+                continue;
+            }
+            let pos = e.pos.load();
+            let supported = (e.bounding_box.load().min.y - (base.y + 1.0)).abs() < 1.0E-5
+                || (pos.x >= area.min.x
+                    && pos.x <= area.max.x
+                    && pos.z >= area.min.z
+                    && pos.z <= area.max.z);
+            if supported {
+                Self::move_entity(e, motion_dir, delta);
             }
         }
     }
@@ -190,8 +263,11 @@ impl PistonBlockEntity {
         )
     }
 
+    /// Vanilla `finalTick`: snaps the moving block into its final position right away.
     pub fn finish(&self, world: &Arc<World>) {
         if self.last_progress.load() < 1.0 {
+            self.current_progress.store(1.0);
+            self.last_progress.store(1.0);
             let pos = self.position;
             world.remove_block_entity(&pos);
             if world.get_block(&pos) == &Block::MOVING_PISTON {
@@ -201,12 +277,46 @@ impl PistonBlockEntity {
                     world.update_from_neighbor_shapes(self.pushed_block_state.id, &pos)
                 };
                 world.set_block_state(&pos, state, BlockFlags::NOTIFY_ALL);
-                world.update_neighbors(&pos, None);
+                world.update_neighbor(&pos, state.to_block());
             }
         }
     }
+
+    fn state_to_nbt(state: &BlockState) -> NbtCompound {
+        let block = state.id.to_block();
+        let mut nbt = NbtCompound::new();
+        nbt.put_string("Name", format!("minecraft:{}", block.name));
+        if let Some(props) = block.properties(state.id) {
+            let props = props.to_props();
+            if !props.is_empty() {
+                let mut props_nbt = NbtCompound::new();
+                for (key, value) in props {
+                    props_nbt.put_string(key, value.to_string());
+                }
+                nbt.put_compound("Properties", props_nbt);
+            }
+        }
+        nbt
+    }
+
+    fn state_from_nbt(nbt: &NbtCompound) -> Option<&'static BlockState> {
+        let name = nbt.get_string("Name")?;
+        let block = Block::from_name(name.strip_prefix("minecraft:").unwrap_or(name))?;
+        let Some(props) = nbt.get_compound("Properties") else {
+            return Some(block.default_state);
+        };
+        let props: Vec<(&str, &str)> = props
+            .child_tags
+            .iter()
+            .filter_map(|(key, value)| Some((&**key, value.extract_string()?)))
+            .collect();
+        Some(BlockState::from_id(
+            block.from_properties(&props).to_state_id(block),
+        ))
+    }
 }
 
+const BLOCK_STATE: &str = "blockState";
 const FACING: &str = "facing";
 const LAST_PROGRESS: &str = "progress";
 const EXTENDING: &str = "extending";
@@ -222,33 +332,46 @@ impl BlockEntity for PistonBlockEntity {
     }
 
     fn tick(&self, world: &Arc<World>) {
+        self.last_ticked
+            .store(world.get_world_age(), Ordering::Relaxed);
         let current_progress = self.current_progress.load();
         self.last_progress.store(current_progress);
         if current_progress >= 1.0 {
             let pos = self.position;
             world.remove_block_entity(&pos);
             if world.get_block(&pos) == &Block::MOVING_PISTON {
-                if self.pushed_block_state.is_air() {
+                let mut updated_state =
+                    world.update_from_neighbor_shapes(self.pushed_block_state.id, &pos);
+                if updated_state.to_block().is_air() {
+                    // The block can't stay here (e.g. a torch pushed off its wall): place it
+                    // anyway, then break it so it drops.
                     world.set_block_state(
                         &pos,
                         self.pushed_block_state.id,
                         BlockFlags::FORCE_STATE | BlockFlags::MOVED,
                     );
+                    world.break_block(&pos, None, BlockFlags::NOTIFY_ALL);
                 } else {
-                    let updated_state =
-                        world.update_from_neighbor_shapes(self.pushed_block_state.id, &pos);
+                    // Pushed blocks never carry water along.
+                    let block = updated_state.to_block();
+                    if updated_state.is_waterlogged()
+                        && let Some(dry) = block.set_waterlogged(updated_state, false)
+                    {
+                        updated_state = dry;
+                    }
                     world.set_block_state(
                         &pos,
                         updated_state,
                         BlockFlags::NOTIFY_ALL | BlockFlags::MOVED,
                     );
-                    world.update_neighbors(&pos, None);
+                    world.update_neighbor(&pos, block);
                 }
             }
             return;
         }
         let new_progress = (current_progress + 0.5).min(1.0);
         self.push_entities(world, new_progress);
+        self.move_stuck_entities(world, new_progress);
         self.current_progress.store(new_progress);
     }
 
@@ -256,8 +379,10 @@ impl BlockEntity for PistonBlockEntity {
     where
         Self: Sized,
     {
-        // TODO
-        let pushed_block_state = Block::AIR.default_state;
+        let pushed_block_state = nbt
+            .get_compound(BLOCK_STATE)
+            .and_then(Self::state_from_nbt)
+            .unwrap_or(Block::AIR.default_state);
         let facing = nbt.get_byte(FACING).unwrap_or(0);
         let last_progress = nbt.get_float(LAST_PROGRESS).unwrap_or(0.0);
         let extending = nbt.get_bool(EXTENDING).unwrap_or(false);
@@ -270,20 +395,26 @@ impl BlockEntity for PistonBlockEntity {
             last_progress: last_progress.into(),
             extending,
             source,
+            last_ticked: AtomicI64::new(0),
         }
     }
 
     fn write_nbt(&self, nbt: &mut NbtCompound) {
-        // TODO: pushed_block_state
+        nbt.put_compound(BLOCK_STATE, Self::state_to_nbt(self.pushed_block_state));
         nbt.put_byte(FACING, self.facing.to_index() as i8);
         nbt.put_float(LAST_PROGRESS, self.last_progress.load());
         nbt.put_bool(EXTENDING, self.extending);
         nbt.put_bool(SOURCE, self.source);
     }
 
+    fn sends_update_packet(&self) -> bool {
+        // The client animates from the block event; an update would overwrite its progress.
+        false
+    }
+
     fn chunk_data_nbt(&self) -> Option<NbtCompound> {
         let mut nbt = NbtCompound::new();
-        // TODO: pushed_block_state
+        nbt.put_compound(BLOCK_STATE, Self::state_to_nbt(self.pushed_block_state));
         nbt.put_byte(FACING, self.facing.to_index() as i8);
         nbt.put_float(LAST_PROGRESS, self.last_progress.load());
         nbt.put_bool(EXTENDING, self.extending);
@@ -294,5 +425,39 @@ impl BlockEntity for PistonBlockEntity {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pumpkin_data::block_properties::{Facing, StickyPistonLikeProperties};
+
+    use super::*;
+
+    #[test]
+    fn moved_state_survives_nbt_round_trip() {
+        let mut props = StickyPistonLikeProperties::default(&Block::STICKY_PISTON);
+        props.facing = Facing::East;
+        let state = BlockState::from_id(props.to_state_id(&Block::STICKY_PISTON));
+
+        let nbt = PistonBlockEntity::state_to_nbt(state);
+        assert_eq!(nbt.get_string("Name"), Some("minecraft:sticky_piston"));
+        let loaded = PistonBlockEntity::state_from_nbt(&nbt).expect("state should load");
+        assert_eq!(loaded.id, state.id);
+    }
+
+    #[test]
+    fn stateless_block_round_trips_without_properties() {
+        let nbt = PistonBlockEntity::state_to_nbt(Block::STONE.default_state);
+        assert!(nbt.get_compound("Properties").is_none());
+        let loaded = PistonBlockEntity::state_from_nbt(&nbt).expect("state should load");
+        assert_eq!(loaded.id, Block::STONE.default_state.id);
+    }
+
+    #[test]
+    fn unknown_block_name_does_not_load() {
+        let mut nbt = NbtCompound::new();
+        nbt.put_string("Name", "minecraft:not_a_block".to_string());
+        assert!(PistonBlockEntity::state_from_nbt(&nbt).is_none());
     }
 }
