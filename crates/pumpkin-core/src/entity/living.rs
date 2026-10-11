@@ -25,6 +25,7 @@ use tracing::warn;
 use super::experience_orb::ExperienceOrbEntity;
 use super::{Entity, EntityBase, NBTStorageInit};
 use crate::block::OnLandedUponArgs;
+use crate::block::entities::sculk_catalyst::SculkCatalystBlockEntity;
 use crate::entity::NBTStorage;
 use crate::entity::ageable::AgeableMob;
 use crate::entity::attributes::AttributeInstance;
@@ -2083,8 +2084,33 @@ impl LivingEntity {
             // Drop loot
             self.drop_loot(&params);
 
+            // A sculk catalyst in range soaks up the experience as spreading charge instead.
+            let mut experience_consumed = false;
+            let drops_experience = match dyn_self.get_player() {
+                Some(player) => {
+                    player.gamemode.load() != GameMode::Spectator
+                        && !world.level_info.load().game_rules.keep_inventory
+                }
+                None => true,
+            };
+            if drops_experience {
+                let amount = dyn_self.get_experience_reward(killer);
+                let death_pos = self.entity.pos.load();
+                if amount > 0
+                    && let Some(block_entity) =
+                        SculkCatalystBlockEntity::find_near(&world, death_pos)
+                    && let Some(catalyst) = block_entity
+                        .as_any()
+                        .downcast_ref::<SculkCatalystBlockEntity>()
+                {
+                    catalyst.on_entity_die(&world, death_pos, amount);
+                    experience_consumed = true;
+                }
+            }
+
             // Award experience
-            if params.killed_by_player.unwrap_or(false)
+            if !experience_consumed
+                && params.killed_by_player.unwrap_or(false)
                 && world.level_info.load().game_rules.mob_drops
             {
                 let amount = dyn_self.get_experience_reward(killer);

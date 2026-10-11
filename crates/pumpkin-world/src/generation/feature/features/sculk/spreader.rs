@@ -160,7 +160,7 @@ impl SculkSpreader {
     }
 
     /// Adds a single cursor, respecting the [`MAX_CURSORS`] limit.
-    fn add_cursor(&mut self, cursor: ChargeCursor) {
+    pub fn add_cursor(&mut self, cursor: ChargeCursor) {
         if self.cursors.len() < MAX_CURSORS {
             self.cursors.push(cursor);
         }
@@ -171,8 +171,7 @@ impl SculkSpreader {
         self.cursors.clear();
     }
 
-    /// Returns a reference to the active cursors (for testing).
-    #[cfg(test)]
+    /// Returns a reference to the active cursors.
     #[must_use]
     pub fn cursors(&self) -> &[ChargeCursor] {
         &self.cursors
