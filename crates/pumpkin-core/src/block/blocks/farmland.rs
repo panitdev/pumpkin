@@ -1,15 +1,17 @@
 use std::sync::Arc;
 
 use crate::block::{
-    BlockBehaviour, CanPlaceAtArgs, GetStateForNeighborUpdateArgs, OnPlaceArgs,
+    BlockBehaviour, CanPlaceAtArgs, GetStateForNeighborUpdateArgs, OnLandedUponArgs, OnPlaceArgs,
     OnScheduledTickArgs, PathComputationType, RandomTickArgs,
 };
 use crate::world::World;
 use pumpkin_data::block_properties::FarmlandLikeProperties;
+use pumpkin_data::fluid::Fluid;
 use pumpkin_data::tag;
 use pumpkin_data::tag::Taggable;
 use pumpkin_data::{Block, BlockDirection, BlockState, BlockStateId};
 use pumpkin_macros::pumpkin_block;
+use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::tick::TickPriority;
@@ -23,12 +25,9 @@ pub struct FarmlandBlock;
 
 impl BlockBehaviour for FarmlandBlock {
     fn on_scheduled_tick(&self, args: OnScheduledTickArgs<'_>) {
-        // TODO: push up entities
-        args.world.set_block_state(
-            args.position,
-            Block::DIRT.default_state.id,
-            BlockFlags::NOTIFY_ALL,
-        );
+        if !can_place_at(&**args.world, args.position) {
+            turn_to_dirt(args.world, args.position);
+        }
     }
 
     fn on_place(&self, args: OnPlaceArgs<'_>) -> BlockStateId {
@@ -53,67 +52,37 @@ impl BlockBehaviour for FarmlandBlock {
         can_place_at(args.block_accessor, args.position)
     }
 
-    fn random_tick(&self, args: RandomTickArgs<'_>) {
-        // TODO: add rain check. Remember to check which one is most optimized.
-        if is_water_nearby(args.world, args.position) {
-            let mut props = FarmlandProperties::default(args.block);
-            let mut new_moisture = 7;
-            if let Some(server) = args.world.server.upgrade() {
-                let mut event =
-                    crate::plugin::api::events::block::moisture_change::MoistureChangeEvent::new(
-                        *args.position,
-                        args.world.clone(),
-                        new_moisture,
-                    );
-                server.plugin_manager.fire_blocking(&server, &mut event);
-                if event.cancelled {
-                    return;
-                }
-                new_moisture = event.new_moisture;
-            }
-            props.moisture = new_moisture.clamp(0, 7) as u8;
-            args.world.set_block_state(
-                args.position,
-                props.to_state_id(args.block),
-                BlockFlags::NOTIFY_NEIGHBORS,
-            );
-        } else {
-            let state_id = args.world.get_block_state_id(args.position);
-            let mut props = FarmlandProperties::from_state_id(state_id);
-            if props.moisture == 0 {
-                if !args
-                    .world
-                    .get_block(&args.position.up())
-                    .has_tag(&tag::Block::MINECRAFT_MAINTAINS_FARMLAND)
-                {
-                    //TODO push entities up
-                    args.world.set_block_state(
-                        args.position,
-                        Block::DIRT.default_state.id,
-                        BlockFlags::NOTIFY_NEIGHBORS,
-                    );
-                }
-            } else {
-                let mut new_moisture = (props.moisture as i32 - 1).clamp(0, 7);
-                if let Some(server) = args.world.server.upgrade() {
-                    let mut event = crate::plugin::api::events::block::moisture_change::MoistureChangeEvent::new(
-                        *args.position,
-                        args.world.clone(),
-                        new_moisture,
-                    );
-                    server.plugin_manager.fire_blocking(&server, &mut event);
-                    if event.cancelled {
-                        return;
-                    }
-                    new_moisture = event.new_moisture;
-                }
-                props.moisture = new_moisture.clamp(0, 7) as u8;
-                args.world.set_block_state(
-                    args.position,
-                    props.to_state_id(args.block),
-                    BlockFlags::NOTIFY_NEIGHBORS,
+    fn on_landed_upon(&self, args: OnLandedUponArgs<'_>) {
+        if let Some(living) = args.entity.get_living_entity() {
+            let entity = args.entity.get_entity();
+            if rand::random::<f32>() < args.fall_distance - 0.5 {
+                let can_trample = args.entity.get_player().map_or_else(
+                    || args.world.level_info.load().game_rules.mob_griefing,
+                    |player| !args.world.is_in_spawn_protection(player, args.position),
                 );
+                let dims = entity.entity_dimension.load();
+                if can_trample && dims.width * dims.width * dims.height > 0.512 {
+                    turn_to_dirt(args.world, args.position);
+                }
             }
+            living.handle_fall_damage(args.entity, args.fall_distance, 1.0);
+        }
+    }
+
+    fn random_tick(&self, args: RandomTickArgs<'_>) {
+        let state_id = args.world.get_block_state_id(args.position);
+        let props = FarmlandProperties::from_state_id(state_id);
+        let moisture = i32::from(props.moisture);
+        if is_water_nearby(args.world, args.position)
+            || args.world.is_raining_at(&args.position.up())
+        {
+            if moisture < 7 {
+                set_moisture(&args, props, 7);
+            }
+        } else if moisture > 0 {
+            set_moisture(&args, props, moisture - 1);
+        } else if !should_maintain_farmland(args.world.as_ref(), args.position) {
+            turn_to_dirt(args.world, args.position);
         }
     }
 
@@ -122,9 +91,74 @@ impl BlockBehaviour for FarmlandBlock {
     }
 }
 
+/// Fires the moisture event (plugins may veto or change the value) and applies the result.
+fn set_moisture(args: &RandomTickArgs<'_>, mut props: FarmlandProperties, mut new_moisture: i32) {
+    if let Some(server) = args.world.server.upgrade() {
+        let mut event =
+            crate::plugin::api::events::block::moisture_change::MoistureChangeEvent::new(
+                *args.position,
+                args.world.clone(),
+                new_moisture,
+            );
+        server.plugin_manager.fire_blocking(&server, &mut event);
+        if event.cancelled {
+            return;
+        }
+        new_moisture = event.new_moisture;
+    }
+    props.moisture = new_moisture.clamp(0, 7) as u8;
+    args.world.set_block_state(
+        args.position,
+        props.to_state_id(args.block),
+        BlockFlags::NOTIFY_NEIGHBORS,
+    );
+}
+
+fn should_maintain_farmland(world: &dyn BlockAccessor, block_pos: &BlockPos) -> bool {
+    world
+        .get_block(&block_pos.up())
+        .has_tag(&tag::Block::MINECRAFT_MAINTAINS_FARMLAND)
+}
+
 fn can_place_at(world: &dyn BlockAccessor, block_pos: &BlockPos) -> bool {
     let state = world.get_block_state(&block_pos.up());
-    !state.is_solid() // TODO: add fence gate block
+    !state.is_solid() || should_maintain_farmland(world, block_pos)
+}
+
+/// Replaces the farmland with dirt, lifting entities that were standing in the lost top slice.
+fn turn_to_dirt(world: &Arc<World>, block_pos: &BlockPos) {
+    // Farmland is 15/16 tall, dirt is a full block: the gained slice is the top 1/16.
+    let slice = BoundingBox::new(
+        Vector3::new(
+            f64::from(block_pos.0.x),
+            f64::from(block_pos.0.y) + 15.0 / 16.0,
+            f64::from(block_pos.0.z),
+        ),
+        Vector3::new(
+            f64::from(block_pos.0.x) + 1.0,
+            f64::from(block_pos.0.y) + 1.0,
+            f64::from(block_pos.0.z) + 1.0,
+        ),
+    );
+    let top = f64::from(block_pos.0.y) + 1.0;
+    for entity in world.get_entities_at_box(&slice) {
+        let e = entity.get_entity();
+        let pos = e.pos.load();
+        let min_y = e.bounding_box.load().min.y;
+        if min_y < top {
+            entity.teleport(
+                Vector3::new(pos.x, pos.y + (top - min_y), pos.z),
+                None,
+                None,
+                world.clone(),
+            );
+        }
+    }
+    world.set_block_state(
+        block_pos,
+        Block::DIRT.default_state.id,
+        BlockFlags::NOTIFY_ALL,
+    );
 }
 
 fn is_water_nearby(world: &Arc<World>, block_pos: &BlockPos) -> bool {
@@ -136,8 +170,7 @@ fn is_water_nearby(world: &Arc<World>, block_pos: &BlockPos) -> bool {
                     y: dy,
                     z: dz,
                 });
-                //TODO this should use tag water. It does not seem to work rn.
-                if world.get_block(&check_pos) == &Block::WATER {
+                if Fluid::WATER.matches_type(world.get_fluid(&check_pos)) {
                     return true;
                 }
             }
