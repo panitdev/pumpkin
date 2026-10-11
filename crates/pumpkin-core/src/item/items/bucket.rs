@@ -7,11 +7,13 @@ use crate::{
 };
 use pumpkin_data::{
     Block, BlockDirection,
+    block_properties::CampfireLikeProperties,
     entity::EntityType,
     fluid::Fluid,
     item::Item,
     item_stack::ItemStack,
     sound::{Sound, SoundCategory},
+    tag::{self, Taggable},
 };
 use pumpkin_util::{
     GameMode,
@@ -262,7 +264,13 @@ pub(crate) fn try_place_filled_bucket(
         if item.id == Item::LAVA_BUCKET.id {
             return false;
         }
-        let state_id = block.set_waterlogged(state.id, true).unwrap_or(state.id);
+        let mut state_id = block.set_waterlogged(state.id, true).unwrap_or(state.id);
+        if block.has_tag(&tag::Block::MINECRAFT_CAMPFIRES) {
+            // Water puts out a lit campfire.
+            let mut props = CampfireLikeProperties::from_state_id(state_id);
+            props.lit = false;
+            state_id = props.to_state_id(block);
+        }
         world.set_block_state(&target_pos, state_id, BlockFlags::NOTIFY_ALL);
         world.schedule_fluid_tick(&Fluid::WATER, target_pos, 5, TickPriority::Normal);
         return true;
