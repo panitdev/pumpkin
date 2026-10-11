@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::item::Item;
 use pumpkin_data::{Block, BlockDirection, BlockStateId, block_properties::HorizontalFacing};
 use pumpkin_macros::pumpkin_block;
@@ -81,8 +82,8 @@ impl BlockBehaviour for TripwireBlock {
                 props.to_state_id(args.block),
                 BlockFlags::empty(),
             );
-            // TODO world.emitGameEvent(player, GameEvent.SHEAR, pos);
-            // TODO: Deduct 1 durability from held shears (skip in Creative mode).
+            args.world
+                .emit_game_event(GameEvent::Shear.name(), args.position.to_centered_f64());
         }
     }
 
@@ -132,8 +133,10 @@ impl BlockBehaviour for TripwireBlock {
         if args.moved || Block::from_state_id(args.old_state_id) == args.block {
             return;
         }
-        let state_id = args.world.get_block_state_id(args.position);
-        Self::update(args.world, args.position, state_id);
+        // Wires downstream must see the removed wire as pressed so hooks re-evaluate.
+        let mut props = TripwireProperties::from_state_id(args.old_state_id);
+        props.powered = true;
+        Self::update(args.world, args.position, props.to_state_id(args.block));
     }
 }
 
