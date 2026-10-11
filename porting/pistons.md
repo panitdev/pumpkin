@@ -77,7 +77,15 @@
     (`useWithoutItem`); breaking one drops the block it carries (`getDrops`), via a special case in
     `World::break_block`.
 
+17. **Piston head pick-block** (`getCloneItemStack`) gives the matching piston or sticky piston.
+    The rest of `PistonHeadBlock` (survival, update forwarding, `playerWillDestroy`, shapes) was
+    already matched in item 11/12.
+
 ## Still open
+
+- **Head removed without a player** (explosion, `/setblock`): vanilla `affectNeighborsAfterRemoval`
+  also breaks the base. Not ported: Pumpkin's `on_state_replaced` can't tell creative from
+  survival, so hooking it would double-drop the piston on player breaks.
 
 - **Players aren't pushed** by moving blocks (existing choice: client-authoritative movement
   would rubber-band). Slime bounce and honey carrying skip players for the same reason.

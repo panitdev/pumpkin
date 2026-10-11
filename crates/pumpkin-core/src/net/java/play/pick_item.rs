@@ -12,14 +12,29 @@ impl JavaClient {
         }
 
         let world = player.world();
-        let block = world.get_block(&pick_item.pos);
+        let (block, state_id) = world.get_block_and_state_id(&pick_item.pos);
 
-        if block.item_id == 0 {
+        // A piston head picks the piston it belongs to.
+        let item_id = if block == &Block::PISTON_HEAD {
+            let sticky =
+                pumpkin_data::block_properties::PistonHeadLikeProperties::from_state_id(state_id)
+                    .r#type
+                    == pumpkin_data::block_properties::PistonType::Sticky;
+            if sticky {
+                Block::STICKY_PISTON.item_id
+            } else {
+                Block::PISTON.item_id
+            }
+        } else {
+            block.item_id
+        };
+
+        if item_id == 0 {
             // Invalid block id (blocks such as tall seagrass)
             return;
         }
 
-        let Some(item) = Item::from_id(block.item_id) else {
+        let Some(item) = Item::from_id(item_id) else {
             return;
         };
         let stack = ItemStack::new(1, item);
