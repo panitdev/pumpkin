@@ -14,6 +14,7 @@ use crate::{
 use pumpkin_data::{
     BlockStateId,
     block_properties::{ChiseledBookshelfLikeProperties, HorizontalFacing},
+    game_event::GameEvent,
     item::Item,
     item_stack::ItemStack,
     sound::{Sound, SoundCategory},
@@ -126,12 +127,11 @@ impl ChiseledBookshelfBlock {
         slot: i8,
         item: &mut ItemStack,
     ) {
-        // TODO: Increment used stats for chiseled bookshelf on the player
-
+        // The item-used statistic is already awarded by the generic use-item-on handling.
         let sound = if item.get_item() == &Item::ENCHANTED_BOOK {
-            Sound::BlockChiseledBookshelfPickupEnchanted
+            Sound::BlockChiseledBookshelfInsertEnchanted
         } else {
-            Sound::BlockChiseledBookshelfPickup
+            Sound::BlockChiseledBookshelfInsert
         };
 
         entity.set_book(
@@ -166,13 +166,14 @@ impl ChiseledBookshelfBlock {
         entity.update_state(properties, world, slot as usize);
 
         world.play_sound(sound, SoundCategory::Blocks, &position.to_centered_f64());
+        world.emit_game_event(GameEvent::BlockChange.name(), position.to_centered_f64());
     }
 
     fn get_slot_for_hit(hit: &BlockHitResult<'_>, facing: HorizontalFacing) -> Option<i8> {
         Self::get_hit_pos(hit, facing).map(|position| {
-            let i = i8::from(position.y < 0.5);
-            let j = Self::get_column(position.x);
-            j + i * 3
+            let row = Self::get_section(1.0 - position.y, 2);
+            let column = Self::get_section(position.x, 3);
+            column + row * 3
         })
     }
 
@@ -193,19 +194,9 @@ impl ChiseledBookshelfBlock {
         }
     }
 
-    // Magic numbers for the slots
-    // These are based on the vanilla chiseled bookshelf implementation
-    const OFFSET_SLOT_0: f32 = 0.375;
-    const OFFSET_SLOT_1: f32 = 0.6875;
-
-    fn get_column(x: f32) -> i8 {
-        if x < Self::OFFSET_SLOT_0 {
-            0
-        } else if x < Self::OFFSET_SLOT_1 {
-            1
-        } else {
-            2
-        }
+    /// Splits `[0, 1)` into `sections` equal parts, like vanilla's `SelectableSlotContainer`.
+    fn get_section(coordinate: f32, sections: i8) -> i8 {
+        ((coordinate * f32::from(sections)).floor() as i8).clamp(0, sections - 1)
     }
 
     const fn is_slot_used(properties: ChiseledBookshelfLikeProperties, slot: i8) -> bool {
