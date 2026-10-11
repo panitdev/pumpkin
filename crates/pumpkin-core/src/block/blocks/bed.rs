@@ -247,7 +247,8 @@ impl BedBlock {
 
         // Make sure the bed is not occupied
         if bed_props.occupied {
-            // TODO: Wake up villager
+            // TODO: wake a sleeping villager on this bed instead (AbstractBedBlock.kickVillagerOutOfBed);
+            // Pumpkin has no villager entity with a sleeping state yet.
 
             player.send_system_message_raw(
                 &pumpkin_macros::translate_cross!(
@@ -262,10 +263,10 @@ impl BedBlock {
         // Make sure player is close enough
         if !player
             .position()
-            .is_within_bounds(bed_head_pos.to_f64(), 3.0, 3.0, 3.0)
+            .is_within_bounds(bed_head_pos.to_f64(), 3.0, 2.0, 3.0)
             && !player
                 .position()
-                .is_within_bounds(bed_foot_pos.to_f64(), 3.0, 3.0, 3.0)
+                .is_within_bounds(bed_foot_pos.to_f64(), 3.0, 2.0, 3.0)
         {
             player.send_system_message_raw(
                 &pumpkin_macros::translate_cross!(
@@ -306,8 +307,10 @@ impl BedBlock {
         }
 
         // Make sure there are no monsters nearby
+        // (creative players skip this check)
+        let creative = player.gamemode.load() == GameMode::Creative;
         for entity in world.entities.load().iter() {
-            if !entity_prevents_sleep(entity.get_entity()) {
+            if creative || !entity_prevents_sleep(entity.get_entity()) {
                 continue;
             }
 
