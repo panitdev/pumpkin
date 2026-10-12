@@ -127,6 +127,14 @@ impl ActiveTargetGoal {
         self
     }
 
+    /// Vanilla `TargetGoal.setUnseenMemoryTicks`: how long the goal keeps a target it can no
+    /// longer see.
+    #[must_use]
+    pub fn unseen_memory_ticks(mut self: Box<Self>, ticks: i32) -> Box<Self> {
+        self.track_target_goal.max_time_without_visibility = ticks;
+        self
+    }
+
     #[must_use]
     pub fn with_default(
         mob: &MobEntity,

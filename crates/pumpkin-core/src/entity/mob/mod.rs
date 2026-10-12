@@ -28,6 +28,7 @@ use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_util::random::xoroshiro128::Xoroshiro;
 use pumpkin_util::random::{RandomGenerator, get_seed};
+use pumpkin_util::text::TextComponent;
 use pumpkin_util::version::JavaMinecraftVersion;
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
@@ -67,6 +68,7 @@ pub mod silverfish;
 pub mod skeleton;
 pub mod slime;
 pub mod spawn;
+pub mod spellcaster_illager;
 pub mod spider;
 pub mod sun_burn;
 pub mod vex;
@@ -1178,6 +1180,10 @@ pub trait Mob: EntityBase + Send + Sync {
     fn mob_write_nbt(&self, _nbt: &mut NbtCompound) {}
 
     fn mob_read_nbt(&self, _nbt: &NbtCompound) {}
+
+    /// Vanilla `Entity.setCustomName` side effect for mobs that react to a name, like the
+    /// Vindicator named "Johnny". Called after the name has been set.
+    fn on_custom_name_set(&self, _name: &TextComponent) {}
 
     /// Drops a target the mob is not allowed to attack, such as a creative player.
     fn as_valid_target(&self, target: Option<Arc<dyn EntityBase>>) -> Option<Arc<dyn EntityBase>> {

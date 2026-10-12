@@ -466,6 +466,18 @@ pub static EQUIPMENT_REGISTRY: LazyLock<HashMap<&'static str, MobEquipmentDef>> 
             },
         );
 
+        // ─── Illusioner ───
+        m.insert(
+            "illusioner",
+            MobEquipmentDef {
+                entity_type: "illusioner",
+                weapon: WeaponConfig::Always(&Item::BOW),
+                armor: ArmorConfig::None,
+                enchanted: false,
+                can_pick_up_loot: false,
+            },
+        );
+
         m
     });
 
