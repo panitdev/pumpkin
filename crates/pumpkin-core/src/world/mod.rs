@@ -5588,6 +5588,18 @@ impl World {
             .schedule_block_tick(block, block_pos, delay, priority);
     }
 
+    /// Schedules a block tick with a delay that may exceed a single tick-scheduler pass.
+    pub fn schedule_block_tick_long(
+        &self,
+        block: &Block,
+        block_pos: BlockPos,
+        delay: u32,
+        priority: TickPriority,
+    ) {
+        self.level
+            .schedule_block_tick_long(block, block_pos, delay, priority);
+    }
+
     pub fn schedule_fluid_tick(
         &self,
         fluid: &Fluid,

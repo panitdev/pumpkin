@@ -58,7 +58,7 @@ impl TryFrom<i32> for TickPriority {
 
 #[derive(Clone)]
 pub struct ScheduledTick<T> {
-    pub delay: u8,
+    pub delay: u32,
     pub priority: TickPriority,
     pub position: BlockPos,
     pub value: T,
@@ -71,6 +71,8 @@ pub struct OrderedTick<T> {
 
     pub position: BlockPos,
     pub value: T,
+    /// Ticks left after the current ring pass, for delays that span more than one pass.
+    pub remaining: u32,
 }
 
 impl<T> OrderedTick<T> {
@@ -80,6 +82,7 @@ impl<T> OrderedTick<T> {
             sub_tick_order: 0,
             position,
             value,
+            remaining: 0,
         }
     }
 }
@@ -132,7 +135,7 @@ where
         let x = nbt.get_int("x")?;
         let y = nbt.get_int("y")?;
         let z = nbt.get_int("z")?;
-        let delay = nbt.get_int("t")? as u8;
+        let delay = u32::try_from(nbt.get_int("t")?).ok()?;
         let priority = TickPriority::try_from(nbt.get_int("p")?).ok()?;
         let res_loc_str = nbt.get_string("i")?;
         let res_loc = ResourceLocation::from_str(res_loc_str).ok()?;

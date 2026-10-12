@@ -33,19 +33,29 @@ impl<'a, T: std::hash::Hash + Eq> ChunkTickScheduler<&'a T> {
             return Vec::new();
         };
 
-        let res = std::mem::take(&mut inner.tick_queue[current_offset]);
+        let taken = std::mem::take(&mut inner.tick_queue[current_offset]);
+        if taken.is_empty() {
+            return Vec::new();
+        }
 
-        if !res.is_empty() {
-            for next_tick in &res {
-                inner
-                    .queued_ticks
-                    .remove(&(next_tick.position, next_tick.value));
-            }
-            if inner.queued_ticks.is_empty() {
-                *inner_guard = None;
+        let mut due = Vec::with_capacity(taken.len());
+        for mut tick in taken {
+            if tick.remaining == 0 {
+                inner.queued_ticks.remove(&(tick.position, tick.value));
+                due.push(tick);
+            } else {
+                // More than one ring pass left; advance by at most one pass and re-queue.
+                let hop = tick.remaining.min(MAX_TICK_DELAY as u32 - 1);
+                tick.remaining -= hop;
+                let index = (current_offset + hop as usize) % MAX_TICK_DELAY;
+                inner.tick_queue[index].push(tick);
             }
         }
-        res
+
+        if inner.queued_ticks.is_empty() {
+            *inner_guard = None;
+        }
+        due
     }
 
     pub fn schedule_tick(&self, tick: &ScheduledTick<&'a T>, sub_tick_order: u64) {
@@ -62,13 +72,15 @@ impl<'a, T: std::hash::Hash + Eq> ChunkTickScheduler<&'a T> {
         });
 
         if inner.queued_ticks.insert((tick.position, tick.value)) {
-            let index = (offset + tick.delay as usize) % MAX_TICK_DELAY;
+            let hop = tick.delay.min(MAX_TICK_DELAY as u32 - 1);
+            let index = (offset + hop as usize) % MAX_TICK_DELAY;
 
             inner.tick_queue[index].push(OrderedTick {
                 priority: tick.priority,
                 sub_tick_order,
                 position: tick.position,
                 value: tick.value,
+                remaining: tick.delay - hop,
             });
         }
     }
@@ -136,7 +148,7 @@ impl<'a, T: std::hash::Hash + Eq> ChunkTickScheduler<&'a T> {
         for i in 0..MAX_TICK_DELAY {
             let index = (offset + i) % MAX_TICK_DELAY;
             res.extend(inner.tick_queue[index].iter().map(|x| ScheduledTick {
-                delay: i as u8,
+                delay: i as u32 + x.remaining,
                 priority: x.priority,
                 position: x.position,
                 value: x.value,
@@ -181,5 +193,54 @@ impl<T> Default for ChunkTickScheduler<T> {
             inner: Mutex::new(None),
             offset: AtomicUsize::new(0),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tick::TickPriority;
+    use pumpkin_util::math::position::BlockPos;
+
+    fn first_due_tick(scheduler: &ChunkTickScheduler<&'static i32>, value: i32) -> usize {
+        for tick in 0..=(MAX_TICK_DELAY * 20) {
+            if scheduler.step_tick().iter().any(|t| *t.value == value) {
+                return tick;
+            }
+        }
+        usize::MAX
+    }
+
+    #[test]
+    fn short_delay_fires_after_its_delay() {
+        static VALUE: i32 = 1;
+        let scheduler = ChunkTickScheduler::<&i32>::default();
+        scheduler.schedule_tick(
+            &ScheduledTick {
+                delay: 10,
+                priority: TickPriority::Normal,
+                position: BlockPos::new(0, 0, 0),
+                value: &VALUE,
+            },
+            0,
+        );
+        assert_eq!(first_due_tick(&scheduler, VALUE), 10);
+    }
+
+    #[test]
+    fn delay_spanning_multiple_ring_passes_fires_once() {
+        static VALUE: i32 = 2;
+        let scheduler = ChunkTickScheduler::<&i32>::default();
+        let delay = 3600;
+        scheduler.schedule_tick(
+            &ScheduledTick {
+                delay,
+                priority: TickPriority::Normal,
+                position: BlockPos::new(0, 0, 0),
+                value: &VALUE,
+            },
+            0,
+        );
+        assert_eq!(first_due_tick(&scheduler, VALUE), delay as usize);
     }
 }

@@ -955,6 +955,18 @@ impl Level {
         delay: u8,
         priority: TickPriority,
     ) {
+        self.schedule_block_tick_long(block, block_pos, u32::from(delay), priority);
+    }
+
+    /// Schedules a block tick with a delay that may exceed a single tick-scheduler pass.
+    /// Vanilla `ServerLevel.scheduleTick` takes an unbounded int.
+    pub fn schedule_block_tick_long(
+        &self,
+        block: &Block,
+        block_pos: BlockPos,
+        delay: u32,
+        priority: TickPriority,
+    ) {
         let tick_order = self.schedule_tick_counts.fetch_add(1, Ordering::Relaxed);
         let scheduled_tick = ScheduledTick {
             delay,
@@ -984,7 +996,7 @@ impl Level {
     ) {
         let tick_order = self.schedule_tick_counts.fetch_add(1, Ordering::Relaxed);
         let scheduled_tick = ScheduledTick {
-            delay,
+            delay: u32::from(delay),
             position: block_pos,
             priority,
             // SAFETY: `fluid` is a valid reference that outlives this function call for scheduling.
