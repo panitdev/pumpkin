@@ -34,8 +34,8 @@ use crate::entity::{Entity, EntityBase};
 use crate::item::ItemMetadata;
 use crate::item::items::boat::BoatItem;
 use crate::item::items::bucket::{
-    FilledBucketItem, play_bucket_evaporation, should_evaporate_in_nether, try_pickup_fluid_at,
-    try_place_filled_bucket,
+    FilledBucketItem, get_mob_for_bucket, play_bucket_evaporation, should_evaporate_in_nether,
+    try_pickup_fluid_at, try_place_filled_bucket,
 };
 use crate::item::items::honeycomb::try_wax_block;
 use crate::item::items::ignite::ignition::Ignition;
@@ -420,8 +420,16 @@ impl DispenserBlock {
         } else if Self::dispense_equipment(ctx, item) {
             // Armor, elytra, heads, saddles, horse/wolf armor and llama carpets
             Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserDispense);
+        } else if item.item.id == Item::BONE_MEAL.id {
+            // Bone meal fertilizes the block in front of the dispenser
+            if Self::dispense_bone_meal(ctx, item) {
+                Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserDispense);
+            } else {
+                Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserFail);
+            }
         } else {
-            // TODO: Bone meal, bottles o' enchanting, chests onto llamas, brushes onto armadillos
+            // TODO: Bottles o' enchanting (no thrown experience bottle entity), chests onto
+            // llamas and brushes onto armadillos (no entity interaction hook for dispensers).
             // Default / Drop
             Self::drop_item(ctx, item);
         }
@@ -834,7 +842,6 @@ impl DispenserBlock {
     fn dispense_filled_bucket(ctx: &DispenseContext<'_>, item: &mut ItemStack) {
         let front = Self::target_position(ctx);
 
-        // TODO: Spawn the stored entity for axolotl/fish/tadpole buckets, like the player path.
         let emptied = if should_evaporate_in_nether(item.item, ctx.world) {
             play_bucket_evaporation(ctx.world, &front.to_f64());
             true
@@ -848,11 +855,42 @@ impl DispenserBlock {
         };
 
         if emptied {
+            if let Some((entity_type, _)) = get_mob_for_bucket(item.item) {
+                let spawn_pos = Vector3::new(
+                    f64::from(front.0.x) + 0.5,
+                    f64::from(front.0.y),
+                    f64::from(front.0.z) + 0.5,
+                );
+                ctx.world.spawn_entity(from_type(
+                    entity_type,
+                    spawn_pos,
+                    ctx.world,
+                    Uuid::new_v4(),
+                ));
+            }
             *item = ItemStack::new(1, &Item::BUCKET);
             Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserDispense);
         } else {
             Self::drop_item(ctx, item);
         }
+    }
+
+    fn dispense_bone_meal(ctx: &DispenseContext<'_>, item: &mut ItemStack) -> bool {
+        let Some(server) = ctx.world.server.upgrade() else {
+            return false;
+        };
+        let front = Self::target_position(ctx);
+        let (block, state_id) = ctx.world.get_block_and_state_id(&front);
+        if !server
+            .block_registry
+            .bone_meal(block, ctx.world, &front, state_id)
+        {
+            return false;
+        }
+        item.decrement(1);
+        ctx.world
+            .sync_world_event(WorldEvent::ParticlesAndSoundPlantGrowth, front, 15);
+        true
     }
 
     fn dispense_flint_and_steel(ctx: &DispenseContext<'_>, item: &mut ItemStack) {
