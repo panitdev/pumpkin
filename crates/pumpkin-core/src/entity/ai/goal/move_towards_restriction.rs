@@ -23,6 +23,13 @@ impl MoveTowardsRestrictionGoal {
             wanted_z: 0.0,
         }
     }
+
+    /// Replaces the controls, e.g. `MOVE | LOOK` for the guardian.
+    #[must_use]
+    pub const fn with_controls(mut self, controls: Controls) -> Self {
+        self.goal_control = controls;
+        self
+    }
 }
 
 impl Goal for MoveTowardsRestrictionGoal {

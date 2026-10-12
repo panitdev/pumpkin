@@ -16,6 +16,7 @@ pub struct LookAtEntityGoal {
     chance: f32,
     look_forward: bool,
     target_type: &'static EntityType,
+    extra_target_types: Vec<&'static EntityType>,
     target_predicate: TargetPredicate,
 }
 
@@ -37,8 +38,16 @@ impl LookAtEntityGoal {
             chance,
             look_forward,
             target_type,
+            extra_target_types: Vec::new(),
             target_predicate,
         }
+    }
+
+    /// Also looks at this type, for vanilla goals that match a class with subclasses.
+    #[must_use]
+    pub fn also_matching(mut self, target_type: &'static EntityType) -> Self {
+        self.extra_target_types.push(target_type);
+        self
     }
 
     #[must_use]
@@ -99,12 +108,12 @@ impl Goal for LookAtEntityGoal {
                 })
                 .map(|p: Arc<Player>| p as Arc<dyn EntityBase>)
         } else {
-            world.get_nearest_entity(
-                mob_pos,
-                self.range.into(),
-                Some(&[self.target_type]),
-                |entity| predicate.test(&world, Some(mob), entity.as_ref()),
-            )
+            let target_types: Vec<&'static EntityType> = std::iter::once(self.target_type)
+                .chain(self.extra_target_types.iter().copied())
+                .collect();
+            world.get_nearest_entity(mob_pos, self.range.into(), Some(&target_types), |entity| {
+                predicate.test(&world, Some(mob), entity.as_ref())
+            })
         };
 
         self.target.is_some()

@@ -76,6 +76,7 @@ pub struct ActiveTargetGoal {
     target_predicate: TargetPredicate,
     condition: TargetCondition,
     gate: Option<MobFilter>,
+    include_players: bool,
 }
 
 impl ActiveTargetGoal {
@@ -108,6 +109,7 @@ impl ActiveTargetGoal {
             target_predicate,
             condition: TargetCondition::Always,
             gate: None,
+            include_players: false,
         }
     }
 
@@ -145,6 +147,7 @@ impl ActiveTargetGoal {
             target_predicate,
             condition: TargetCondition::Always,
             gate: None,
+            include_players: false,
         })
     }
 
@@ -189,7 +192,15 @@ impl ActiveTargetGoal {
             target_predicate,
             condition: TargetCondition::Always,
             gate: None,
+            include_players: false,
         })
+    }
+
+    /// Also searches players for a class-agnostic goal, like vanilla `NearestAttackableTargetGoal<LivingEntity>`.
+    #[must_use]
+    pub fn including_players(mut self: Box<Self>) -> Box<Self> {
+        self.include_players = true;
+        self
     }
 
     pub fn set_target(&mut self, target: Option<Arc<dyn EntityBase>>) {
@@ -239,7 +250,7 @@ impl ActiveTargetGoal {
                 .map(|p: Arc<Player>| p as Arc<dyn EntityBase>)
         } else {
             let entity_types = self.target_type.map(|t| [t]);
-            world.get_nearest_entity(
+            let entity = world.get_nearest_entity(
                 search_pos,
                 follow_range,
                 entity_types.as_ref().map(<[&EntityType; 1]>::as_slice),
@@ -247,7 +258,32 @@ impl ActiveTargetGoal {
                     predicate.test(&world, Some(mob), entity.as_ref())
                         && condition.allows_target(mob, entity.as_ref(), &world)
                 },
-            )
+            );
+            let player = self.include_players.then(|| {
+                world.get_nearest_player(search_pos, follow_range, |player| {
+                    predicate.test(&world, Some(mob), player.as_ref())
+                        && condition.allows_target(mob, player.as_ref(), &world)
+                })
+            });
+            match player.flatten() {
+                Some(player) => {
+                    let player: Arc<dyn EntityBase> = player;
+                    let distance_sq = |target: &Arc<dyn EntityBase>| {
+                        target
+                            .get_entity()
+                            .pos
+                            .load()
+                            .squared_distance_to_vec(&search_pos)
+                    };
+                    match entity {
+                        Some(entity) if distance_sq(&entity) <= distance_sq(&player) => {
+                            Some(entity)
+                        }
+                        _ => Some(player),
+                    }
+                }
+                None => entity,
+            }
         };
 
         self.target = found;

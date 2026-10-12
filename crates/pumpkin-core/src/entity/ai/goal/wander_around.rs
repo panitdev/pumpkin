@@ -3,6 +3,8 @@ use crate::entity::ai::util::default_random_pos;
 use crate::entity::{ai::pathfinder::NavigatorGoal, mob::Mob};
 use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const DEFAULT_INTERVAL: i32 = 120;
 
@@ -11,29 +13,43 @@ pub struct WanderAroundGoal {
     speed: f64,
     target: Option<Vector3<f64>>,
     interval: i32,
-    force_trigger: bool,
+    force_trigger: Arc<AtomicBool>,
 }
 
 impl WanderAroundGoal {
     #[must_use]
-    pub const fn new(speed: f64) -> Self {
+    pub fn new(speed: f64) -> Self {
         Self::with_interval(speed, DEFAULT_INTERVAL)
     }
 
     #[must_use]
-    pub const fn with_interval(speed: f64, interval: i32) -> Self {
+    pub fn with_interval(speed: f64, interval: i32) -> Self {
         Self {
             goal_control: Controls::MOVE,
             speed,
             target: None,
             interval,
-            force_trigger: false,
+            force_trigger: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    /// Run once on the next check, ignoring the interval.
-    pub const fn trigger(&mut self) {
-        self.force_trigger = true;
+    /// Replaces the controls, e.g. `MOVE | LOOK` for the guardian's `RandomStrollGoal`.
+    #[must_use]
+    pub const fn with_controls(mut self, controls: Controls) -> Self {
+        self.goal_control = controls;
+        self
+    }
+
+    /// Vanilla `RandomStrollGoal.trigger`: run once on the next check, ignoring the interval.
+    pub fn trigger(&self) {
+        self.force_trigger.store(true, Ordering::Relaxed);
+    }
+
+    /// Shares the trigger flag, so the owning mob can call `trigger` after the goal moved into the selector.
+    #[must_use]
+    pub fn with_trigger_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.force_trigger = flag;
+        self
     }
 
     pub const fn set_interval(&mut self, interval: i32) {
@@ -52,7 +68,7 @@ impl Goal for WanderAroundGoal {
             return false;
         }
 
-        if !self.force_trigger {
+        if !self.force_trigger.load(Ordering::Relaxed) {
             // TODO: also bail out on a long no-action time, which needs the despawn bookkeeping.
             if mob
                 .get_random()
@@ -67,7 +83,7 @@ impl Goal for WanderAroundGoal {
         if self.target.is_none() {
             return false;
         }
-        self.force_trigger = false;
+        self.force_trigger.store(false, Ordering::Relaxed);
         true
     }
 

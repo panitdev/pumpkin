@@ -1428,6 +1428,13 @@ impl LivingEntity {
 
         if !effective_ai {
             // No travel.
+        } else if touching_water
+            && should_swim_in_fluids
+            && caller
+                .get_mob()
+                .is_some_and(|mob| mob.travel_in_water(caller, self.movement_input.load()))
+        {
+            // The mob overrode vanilla `travelInWater`.
         } else if (touching_water || self.entity.touching_lava.load(SeqCst))
             && should_swim_in_fluids
             && self.entity.entity_type != &EntityType::STRIDER
