@@ -81,6 +81,13 @@
     The rest of `PistonHeadBlock` (survival, update forwarding, `playerWillDestroy`, shapes) was
     already matched in item 11/12.
 
+18. **Entity pushing uses real shapes.** `moveCollidedEntities` now uses the carried state's
+    collision boxes (a retracting source piston uses its head, short after 25% progress) and each
+    box's swept slab (`PistonMath.getMovementArea`), instead of a full cube / 4px plate.
+19. **`getNeighborSignal`**: dropped the bogus "block below" check. Vanilla's
+    `hasSignal(pos, DOWN)` is evaluated on the piston itself, which is never a conductor or a
+    signal source, so it never fires.
+
 ## Still open
 
 - **Head removed without a player** (explosion, `/setblock`): vanilla `affectNeighborsAfterRemoval`
@@ -89,12 +96,12 @@
 
 - **Players aren't pushed** by moving blocks (existing choice: client-authoritative movement
   would rubber-band). Slime bounce and honey carrying skip players for the same reason.
-- **Entity collision shapes** are approximated by a full cube / a 4px head plate; vanilla uses
-  the moved state's real collision shapes, and `MovingPistonBlock` has no collision while moving.
 - **`preRemoveSideEffects`**: removing a moving piston block (e.g. `/setblock`) doesn't finish the
-  move first.
-- **Power check from the base itself**: vanilla's `hasSignal(pos, DOWN)` reads the strong power
-  going *into* the (non-extended) piston from any side; Pumpkin's version checks the block below.
-  Left as is — needs a redstone-side review rather than a piston one.
+  move first. `World::set_block_state` runs the block-entity replaced callback after the chunk
+  write, so the block is no longer a moving piston when it would call `finalTick`; the only lost
+  effect is the moved block briefly landing (and its neighbour update) before being overwritten.
+- **Moving piston collision**: `MovingPistonBlock.getCollisionShape` (solid while moving) has no
+  block-entity-driven shape hook; entities are only moved, not blocked by it.
+
 - No world-level test harness exists, so behaviour was verified by reading against vanilla. Unit
   tests cover the `blockState` NBT round trip.

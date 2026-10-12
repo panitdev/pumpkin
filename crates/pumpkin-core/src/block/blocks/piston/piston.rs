@@ -343,11 +343,8 @@ fn should_extend(world: &World, block_pos: &BlockPos, piston_dir: BlockDirection
         }
         return true;
     }
-    let neighbor_pos = block_pos.offset(BlockDirection::Down.to_offset());
-    let (block, state) = world.get_block_and_state(&neighbor_pos);
-    if is_emitting_redstone_power(block, state, world, block_pos, BlockDirection::Down) {
-        return true;
-    }
+    // Vanilla also asks `hasSignal(pos, DOWN)` about the piston itself, which can never be
+    // powered (not a redstone conductor, no output), so there is nothing to check here.
     for dir in BlockDirection::all() {
         let neighbor_pos = block_pos.up().offset(dir.to_offset());
         let (block, state) = world.get_block_and_state(&neighbor_pos);
