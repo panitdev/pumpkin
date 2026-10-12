@@ -71,6 +71,37 @@ pub(crate) fn bounce_entity_after_fall(entity: &dyn EntityBase, bounce_multiplie
     base_entity.velocity.store(velocity);
 }
 
+/// Lifts entities standing in the top 1/16 slice when a 15/16-tall block (farmland, dirt path)
+/// is replaced by a full block, mirroring vanilla `Block.pushEntitiesUp`.
+pub(crate) fn push_entities_up(world: &Arc<World>, block_pos: &BlockPos) {
+    let slice = BoundingBox::new(
+        Vector3::new(
+            f64::from(block_pos.0.x),
+            f64::from(block_pos.0.y) + 15.0 / 16.0,
+            f64::from(block_pos.0.z),
+        ),
+        Vector3::new(
+            f64::from(block_pos.0.x) + 1.0,
+            f64::from(block_pos.0.y) + 1.0,
+            f64::from(block_pos.0.z) + 1.0,
+        ),
+    );
+    let top = f64::from(block_pos.0.y) + 1.0;
+    for entity in world.get_entities_at_box(&slice) {
+        let base_entity = entity.get_entity();
+        let pos = base_entity.pos.load();
+        let min_y = base_entity.bounding_box.load().min.y;
+        if min_y < top {
+            entity.teleport(
+                Vector3::new(pos.x, pos.y + (top - min_y), pos.z),
+                None,
+                None,
+                world.clone(),
+            );
+        }
+    }
+}
+
 pub trait BlockBehaviour: Send + Sync {
     fn is_valid_bonemeal_target(&self, _args: BonemealArgs<'_>) -> bool {
         false

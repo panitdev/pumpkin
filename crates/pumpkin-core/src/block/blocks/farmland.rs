@@ -11,7 +11,6 @@ use pumpkin_data::tag;
 use pumpkin_data::tag::Taggable;
 use pumpkin_data::{Block, BlockDirection, BlockState, BlockStateId};
 use pumpkin_macros::pumpkin_block;
-use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::tick::TickPriority;
@@ -127,33 +126,7 @@ fn can_place_at(world: &dyn BlockAccessor, block_pos: &BlockPos) -> bool {
 
 /// Replaces the farmland with dirt, lifting entities that were standing in the lost top slice.
 fn turn_to_dirt(world: &Arc<World>, block_pos: &BlockPos) {
-    // Farmland is 15/16 tall, dirt is a full block: the gained slice is the top 1/16.
-    let slice = BoundingBox::new(
-        Vector3::new(
-            f64::from(block_pos.0.x),
-            f64::from(block_pos.0.y) + 15.0 / 16.0,
-            f64::from(block_pos.0.z),
-        ),
-        Vector3::new(
-            f64::from(block_pos.0.x) + 1.0,
-            f64::from(block_pos.0.y) + 1.0,
-            f64::from(block_pos.0.z) + 1.0,
-        ),
-    );
-    let top = f64::from(block_pos.0.y) + 1.0;
-    for entity in world.get_entities_at_box(&slice) {
-        let e = entity.get_entity();
-        let pos = e.pos.load();
-        let min_y = e.bounding_box.load().min.y;
-        if min_y < top {
-            entity.teleport(
-                Vector3::new(pos.x, pos.y + (top - min_y), pos.z),
-                None,
-                None,
-                world.clone(),
-            );
-        }
-    }
+    crate::block::push_entities_up(world, block_pos);
     world.set_block_state(
         block_pos,
         Block::DIRT.default_state.id,
