@@ -14,6 +14,7 @@ use crate::{
     world::World,
 };
 
+use crate::item::items::mace::MaceItem;
 use crate::net::ClientPlatform;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,11 +33,10 @@ impl AttackType {
 
         let sprinting = entity.is_sprinting();
         let on_ground = entity.on_ground.load(Ordering::Relaxed);
-        let fall_distance = player.living_entity.fall_distance.load();
         let held_item = player.inventory().held_item();
         let is_mace = held_item.item.id == pumpkin_data::item::Item::MACE.id;
 
-        if is_mace && !on_ground && fall_distance > 1.5 {
+        if is_mace && !on_ground && MaceItem::can_smash_attack(player) {
             return Self::MaceSmash;
         }
 
@@ -48,7 +48,7 @@ impl AttackType {
             return Self::Knockback;
         }
 
-        if is_strong && !on_ground && fall_distance > 0.0 {
+        if is_strong && player.can_critical_attack() {
             return Self::Critical;
         }
 
@@ -124,9 +124,7 @@ pub fn player_attack_sound(pos: &Vector3<f64>, world: &World, attack_type: Attac
         AttackType::Weak => {
             world.play_sound(Sound::EntityPlayerAttackWeak, SoundCategory::Players, pos);
         }
-        AttackType::MaceSmash => {
-            world.play_sound(Sound::ItemMaceSmashAir, SoundCategory::Players, pos);
-        }
+        AttackType::MaceSmash => {}
     }
 }
 

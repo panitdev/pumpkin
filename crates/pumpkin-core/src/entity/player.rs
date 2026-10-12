@@ -297,6 +297,7 @@ use crate::command::context::command_source::CommandSource;
 use crate::command::node::dispatcher::CommandDispatcher;
 use crate::command::{CommandSender, client_suggestions};
 use crate::data::SaveJSONConfiguration;
+use crate::item::items::mace::MaceItem;
 use crate::log_at_level;
 use crate::net::{ClientPlatform, GameProfile};
 use crate::net::{DisconnectReason, PlayerConfig};
@@ -1314,6 +1315,60 @@ impl Player {
         }
     }
 
+    /// `Player.canCriticalAttack` without the living-target check.
+    pub fn can_critical_attack(&self) -> bool {
+        let entity = &self.living_entity.entity;
+        let on_climbable = self
+            .world()
+            .get_block(&entity.block_pos.load())
+            .has_tag(&pumpkin_data::tag::Block::MINECRAFT_CLIMBABLE);
+        self.living_entity.fall_distance.load() > 0.0
+            && !entity.on_ground.load(Ordering::Relaxed)
+            && !on_climbable
+            && !self.living_entity.is_in_water()
+            && self
+                .living_entity
+                .get_effect(&pumpkin_data::effect::StatusEffect::BLINDNESS)
+                .is_none()
+            && !entity.has_vehicle()
+            && !entity.is_sprinting()
+    }
+
+    /// `ServerPlayer.checkFallDamage`: the block particles of a mace smash landing.
+    pub fn spawn_extra_particles_on_landing(&self, on_ground: bool) {
+        let fall_distance = self.living_entity.fall_distance.load();
+        if !on_ground
+            || fall_distance <= 0.0
+            || !self
+                .spawn_extra_particles_on_fall
+                .swap(false, Ordering::Relaxed)
+        {
+            return;
+        }
+        let world = self.world();
+        let pos = self.living_entity.entity.get_pos_with_y_offset(0.2).0;
+        let state_id = world.get_block_state_id(&pos);
+        let mut data = Vec::new();
+        if VarInt(i32::from(state_id.as_u16()))
+            .encode(&mut data)
+            .is_err()
+        {
+            return;
+        }
+        let center = pos.to_centered_f64();
+        let packet = CParticle::new(
+            false,
+            false,
+            Vector3::new(center.x, center.y + 0.5, center.z),
+            Vector3::new(0.3, 0.3, 0.3),
+            0.15,
+            (50.0 * fall_distance).clamp(0.0, 200.0) as i32,
+            VarInt(i32::from(Particle::Block.to_id())),
+            &data,
+        );
+        world.broadcast_packet_all(&packet);
+    }
+
     #[expect(clippy::too_many_lines)]
     pub fn attack(&self, victim: &Arc<dyn EntityBase>) {
         let world = self.world();
@@ -1412,20 +1467,19 @@ impl Player {
         let pos = victim_entity.pos.load();
         let attack_type = AttackType::new(self, attack_cooldown_progress as f32);
 
-        if matches!(attack_type, AttackType::Critical) {
-            damage *= 1.5;
-        }
-
         let is_mace_smash = matches!(attack_type, AttackType::MaceSmash);
         if is_mace_smash {
-            let fall_distance = self.living_entity.fall_distance.load();
-            let mut smash_bonus_per_block = 0.0f64;
-            if let Some(enchantments) = item_stack.get_data_component::<EnchantmentsImpl>() {
-                for (enchantment, level) in enchantments.enchantment.iter() {
-                    enchantment.modify_fall_based_damage(*level, &mut smash_bonus_per_block);
-                }
-            }
-            damage += (1.5 + smash_bonus_per_block) * f64::from(fall_distance);
+            damage += f64::from(MaceItem::get_attack_damage_bonus(self, &item_stack));
+        }
+
+        // A smash falls through `canCriticalAttack` like any other airborne hit.
+        let is_critical = matches!(attack_type, AttackType::Critical)
+            || (is_mace_smash
+                && attack_cooldown_progress > 0.9
+                && self.can_critical_attack()
+                && victim.get_living_entity().is_some());
+        if is_critical {
+            damage *= 1.5;
         }
 
         if !victim.damage_with_context(
@@ -1469,8 +1523,8 @@ impl Player {
         }
 
         if is_mace_smash {
-            let fall_distance = self.living_entity.fall_distance.load();
-            self.living_entity.fall_distance.store(0.0);
+            MaceItem::hurt_enemy(victim, self);
+            MaceItem::post_hurt_enemy(self);
             if let Some(enchantments) = item_stack.get_data_component::<EnchantmentsImpl>() {
                 for (enchantment, level) in enchantments.enchantment.iter() {
                     if **enchantment == Enchantment::WIND_BURST {
@@ -1483,20 +1537,18 @@ impl Player {
                     }
                 }
             }
-            world.play_sound(
-                if fall_distance > 5.0 {
-                    Sound::ItemMaceSmashGroundHeavy
-                } else {
-                    Sound::ItemMaceSmashGround
-                },
-                SoundCategory::Players,
-                &pos,
-            );
         }
 
-        player_attack_sound(&pos, &world, attack_type);
+        // The mace plays its own smash sound in `MaceItem::hurt_enemy`; the hit sound is the usual one.
+        let attack_sound_type = match attack_type {
+            AttackType::MaceSmash if is_critical => AttackType::Critical,
+            AttackType::MaceSmash if attack_cooldown_progress > 0.9 => AttackType::Strong,
+            AttackType::MaceSmash => AttackType::Weak,
+            other => other,
+        };
+        player_attack_sound(&pos, &world, attack_sound_type);
 
-        if matches!(attack_type, AttackType::Critical) {
+        if is_critical {
             let je_packet =
                 CEntityAnimation::new(victim_entity.entity_id.into(), Animation::CriticalEffect);
             let be_packet = pumpkin_protocol::bedrock::server::animate::SAnimate {

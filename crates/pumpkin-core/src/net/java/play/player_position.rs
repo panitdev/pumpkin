@@ -154,6 +154,7 @@ impl JavaClient {
                     && player.living_entity.health.load() > 0.0
                     && !player.living_entity.dead.load(Ordering::Relaxed)
                 {
+                    player.spawn_extra_particles_on_landing(packet.collision & FLAG_ON_GROUND != 0);
                     player.living_entity.fall(
                         player.as_ref(),
                         height_difference,
@@ -313,6 +314,7 @@ impl JavaClient {
                     && player.living_entity.health.load() > 0.0
                     && !player.living_entity.dead.load(Ordering::Relaxed)
                 {
+                    player.spawn_extra_particles_on_landing((packet.collision & FLAG_ON_GROUND) != 0);
                     player.living_entity.fall(
                         player.as_ref(),
                         height_difference,
