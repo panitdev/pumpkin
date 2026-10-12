@@ -2,25 +2,25 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use crate::block::blocks::plant::PlantBlockBase;
-use crate::block::blocks::plant::big_dripleaf_stem::{
-    BigDripleafStemLikeProperties, handle_big_dripleaf_breaking,
-};
+use crate::block::blocks::plant::big_dripleaf_stem::{BigDripleafStemLikeProperties, place_stem};
 use crate::block::blocks::redstone::block_receives_redstone_power;
 use crate::block::{
-    BlockBehaviour, BrokenArgs, CanPlaceAtArgs, GetStateForNeighborUpdateArgs, OnEntityStepArgs,
-    OnNeighborUpdateArgs, OnPlaceArgs, OnScheduledTickArgs, PlacedArgs,
+    BlockBehaviour, BonemealArgs, CanPlaceAtArgs, GetStateForNeighborUpdateArgs,
+    OnEntityCollisionArgs, OnNeighborUpdateArgs, OnPlaceArgs, OnProjectileHitArgs,
+    OnScheduledTickArgs, PlacedArgs,
 };
 use crate::entity::EntityBase;
 use crate::entity::ai::pathfinder::node::Coordinate;
 use crate::world::World;
 use pumpkin_data::BlockStateId;
 use pumpkin_data::block_properties::{BigDripleafLikeProperties, HorizontalFacing, Tilt};
+use pumpkin_data::fluid::Fluid;
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tag::Taggable;
 use pumpkin_data::{Block, tag};
 use pumpkin_macros::pumpkin_block;
 use pumpkin_util::math::position::BlockPos;
-use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::world::{BlockAccessor, BlockFlags};
 use rand::RngExt;
 
@@ -28,7 +28,7 @@ use rand::RngExt;
 pub struct BigDripleafBlock;
 
 impl BlockBehaviour for BigDripleafBlock {
-    fn on_entity_step(&self, args: OnEntityStepArgs<'_>) {
+    fn on_entity_collision(&self, args: OnEntityCollisionArgs<'_>) {
         {
             let props = BigDripleafLikeProperties::from_state_id(args.state.id);
             if props.tilt == Tilt::None
@@ -49,7 +49,9 @@ impl BlockBehaviour for BigDripleafBlock {
         let state = args.world.get_block_state(args.position);
         let props = BigDripleafLikeProperties::from_state_id(state.id);
 
-        if props.tilt == Tilt::Unstable {
+        if block_receives_redstone_power(args.world, args.position) {
+            reset_tilt(state.id, args.world, args.position);
+        } else if props.tilt == Tilt::Unstable {
             set_tilt_and_schedule_tick(
                 state.id,
                 args.world,
@@ -69,7 +71,39 @@ impl BlockBehaviour for BigDripleafBlock {
             reset_tilt(state.id, args.world, args.position);
         }
     }
-    //TODO: onProjectileHit
+    fn on_projectile_hit(&self, args: OnProjectileHitArgs<'_>) {
+        set_tilt_and_schedule_tick(
+            args.state.id,
+            args.world,
+            args.position,
+            Tilt::Full,
+            Some(Sound::BlockBigDripleafTiltDown),
+        );
+    }
+
+    fn is_valid_bonemeal_target(&self, args: BonemealArgs<'_>) -> bool {
+        can_grow_into(args.world, &args.position.up())
+    }
+
+    fn perform_bonemeal(&self, args: BonemealArgs<'_>) {
+        let above_pos = args.position.up();
+        if can_grow_into(args.world, &above_pos) {
+            let facing = get_dripleaf_facing_dir(args.state_id);
+            place_stem(
+                args.world,
+                args.position,
+                is_dripleaf_waterlogged(args.state_id),
+                facing,
+            );
+            place(
+                args.world,
+                &above_pos,
+                is_water_source(args.world, &above_pos),
+                facing,
+            );
+        }
+    }
+
     fn can_place_at(&self, args: CanPlaceAtArgs<'_>) -> bool {
         <Self as PlantBlockBase>::can_place_at(self, args.block_accessor, args.position)
     }
@@ -133,10 +167,6 @@ impl BlockBehaviour for BigDripleafBlock {
             }
         }
     }
-
-    fn broken(&self, args: BrokenArgs<'_>) {
-        handle_big_dripleaf_breaking(args.world, args.position);
-    }
 }
 fn set_tilt_and_schedule_tick(
     state_id: BlockStateId,
@@ -174,7 +204,41 @@ fn reset_tilt(state_id: BlockStateId, world: &Arc<World>, pos: &BlockPos) {
 
 fn set_tilt(state_id: BlockStateId, world: &Arc<World>, pos: &BlockPos, new_tilt: Tilt) {
     let mut props = BigDripleafLikeProperties::from_state_id(state_id);
+    let previous_tilt = props.tilt;
     props.tilt = new_tilt;
+    world.set_block_state(
+        pos,
+        props.to_state_id(&Block::BIG_DRIPLEAF),
+        BlockFlags::NOTIFY_LISTENERS,
+    );
+    if tilt_causes_vibration(new_tilt) && new_tilt != previous_tilt {
+        world.emit_game_event(GameEvent::BlockChange.name(), pos.to_centered_f64());
+    }
+}
+
+const fn tilt_causes_vibration(tilt: Tilt) -> bool {
+    !matches!(tilt, Tilt::Unstable)
+}
+
+pub fn is_water_source(world: &World, pos: &BlockPos) -> bool {
+    let (fluid, state) = world.get_fluid_and_fluid_state(pos);
+    fluid.matches_type(&Fluid::WATER) && state.is_source
+}
+
+/// `BigDripleafBlock.canGrowInto` (also used as `canPlaceAt`)
+pub fn can_grow_into(world: &World, pos: &BlockPos) -> bool {
+    if !world.is_in_build_limit(*pos) {
+        return false;
+    }
+    let (block, state) = world.get_block_and_state(pos);
+    state.is_air() || block == &Block::WATER || block == &Block::SMALL_DRIPLEAF
+}
+
+/// `BigDripleafBlock.place`
+pub fn place(world: &Arc<World>, pos: &BlockPos, waterlogged: bool, facing: HorizontalFacing) {
+    let mut props = BigDripleafLikeProperties::default(&Block::BIG_DRIPLEAF);
+    props.waterlogged = waterlogged;
+    props.facing = facing;
     world.set_block_state(
         pos,
         props.to_state_id(&Block::BIG_DRIPLEAF),
@@ -184,9 +248,13 @@ fn set_tilt(state_id: BlockStateId, world: &Arc<World>, pos: &BlockPos, new_tilt
 
 fn play_tilt_sound(world: &Arc<World>, pos: &BlockPos, tilt_sound: Sound) {
     let pitch = rand::rng().random_range(0.8f32..1.2f32);
-    let v = pos.as_vector3();
-    let position = Vector3::new(v.x as f64, v.y as f64, v.z as f64);
-    world.play_sound_fine(tilt_sound, SoundCategory::Blocks, &position, 1f32, pitch);
+    world.play_sound_fine(
+        tilt_sound,
+        SoundCategory::Blocks,
+        &pos.to_centered_f64(),
+        1f32,
+        pitch,
+    );
 }
 fn can_entity_tilt<T: EntityBase + ?Sized>(pos: &BlockPos, entity: &T) -> bool {
     entity.get_entity().on_ground.load(Ordering::Relaxed)
