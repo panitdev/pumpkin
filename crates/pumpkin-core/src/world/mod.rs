@@ -1380,6 +1380,36 @@ impl World {
         self.broadcast_packet_all(&packet);
     }
 
+    /// Like [`Self::play_custom_sound`], but only players whose chunk the volume reaches hear it.
+    pub fn play_custom_sound_in_range(
+        &self,
+        sound_name: &str,
+        category: SoundCategory,
+        position: &Vector3<f64>,
+        volume: f32,
+        pitch: f32,
+    ) {
+        let packet = CSoundEffect::new(
+            pumpkin_protocol::IdOr::Value(pumpkin_protocol::SoundEvent {
+                sound_name: sound_name.into(),
+                range: None,
+            }),
+            category,
+            position,
+            volume,
+            pitch,
+            rand::random::<i64>(),
+        );
+        let audible_chunks = f64::from(volume.max(1.0)).ceil() as i32;
+        let chunk_pos = BlockPos::floored_v(*position).chunk_position();
+        let players = self.players.load();
+        let recipients = players.iter().filter(|p| {
+            is_within_chebyshev_distance(chunk_pos, p.get_entity().chunk_pos.load(), audible_chunks)
+        });
+        let recipients_by_version = Self::collect_java_recipients_by_version(recipients);
+        Self::broadcast_java_grouped(&packet, recipients_by_version);
+    }
+
     /// Spawns a cluster of particles in the world for all players in range.
     pub fn spawn_particles(
         &self,
