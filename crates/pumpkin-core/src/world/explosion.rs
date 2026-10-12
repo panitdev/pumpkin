@@ -12,7 +12,7 @@ use pumpkin_world::chunk::ChunkData;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    block::{ExplodeArgs, drop_loot},
+    block::{ExplodeArgs, SpawnAfterBreakArgs, drop_loot},
     entity::{Entity, EntityBase},
     world::loot::LootContextParameters,
 };
@@ -556,6 +556,14 @@ impl Explosion {
                             ..Default::default()
                         };
                         drop_loot(world, block, pos, false, &params);
+
+                        if let Some(pumpkin_block) = pumpkin_block {
+                            pumpkin_block.spawn_after_break(SpawnAfterBreakArgs {
+                                world,
+                                block,
+                                position: pos,
+                            });
+                        }
                     }
 
                     world.set_block_state(pos, BlockStateId::AIR, BlockFlags::NOTIFY_ALL);

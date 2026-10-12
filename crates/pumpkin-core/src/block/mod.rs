@@ -180,6 +180,10 @@ pub trait BlockBehaviour: Send + Sync {
 
     fn broken(&self, _args: BrokenArgs<'_>) {}
 
+    /// Vanilla `BlockStateBase.spawnAfterBreak`, run when an explosion destroys the block.
+    /// The player break path is [`Self::broken`].
+    fn spawn_after_break(&self, _args: SpawnAfterBreakArgs<'_>) {}
+
     fn on_neighbor_update(&self, _args: OnNeighborUpdateArgs<'_>) {}
 
     /// Called if a block state is replaced or it replaces another state
@@ -405,6 +409,12 @@ pub struct BrokenArgs<'a> {
     pub server: &'a Server,
     pub world: &'a Arc<World>,
     pub state: &'a BlockState,
+}
+
+pub struct SpawnAfterBreakArgs<'a> {
+    pub world: &'a Arc<World>,
+    pub block: &'a Block,
+    pub position: &'a BlockPos,
 }
 
 pub struct OnNeighborUpdateArgs<'a> {
