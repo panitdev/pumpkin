@@ -258,6 +258,24 @@ impl CatEntity {
             &entity.pos.load(),
         );
     }
+
+    /// Vanilla `Cat.hiss`.
+    pub fn hiss(&self) {
+        let mob_entity = self.get_mob_entity();
+        let entity = &mob_entity.living_entity.entity;
+        if entity.is_silent() {
+            return;
+        }
+        let is_baby = entity.age.load(Ordering::Relaxed) < 0;
+        let sound_variant = CatSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed))
+            .unwrap_or_default();
+        let world = entity.world.load();
+        world.play_sound(
+            sound_variant.hiss_sound(is_baby),
+            pumpkin_data::sound::SoundCategory::Neutral,
+            &entity.pos.load(),
+        );
+    }
 }
 
 impl CustomSound for CatEntity {

@@ -12,11 +12,18 @@ pub struct LookControl {
     max_pitch_change: f32,
     look_at_timer: i32,
     position: Vector3<f64>,
+    disabled: bool,
 }
 
 impl Control for LookControl {}
 
 impl LookControl {
+    /// Vanilla `Phantom.PhantomLookControl` overrides `tick` to do nothing. A disabled
+    /// control still records look requests but never applies them.
+    pub const fn set_disabled(&mut self, disabled: bool) {
+        self.disabled = disabled;
+    }
+
     pub fn look_at_position(&mut self, mob: &dyn Mob, position: Vector3<f64>) {
         self.look_at(mob, position.x, position.y, position.z);
     }
@@ -81,6 +88,10 @@ impl LookControl {
     }
 
     pub fn tick(&mut self, mob: &dyn Mob) {
+        if self.disabled {
+            return;
+        }
+
         let entity = mob.get_entity();
         if Self::should_stay_horizontal() {
             entity.set_pitch(0.0);
