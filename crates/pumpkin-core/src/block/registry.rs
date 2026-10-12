@@ -41,6 +41,7 @@ use crate::block::blocks::fire::fire::FireBlock;
 use crate::block::blocks::fire::soul_fire::SoulFireBlock;
 use crate::block::blocks::fletching_table::FletchingTableBlock;
 use crate::block::blocks::flower_pots::FlowerPotBlock;
+use crate::block::blocks::frogspawn::FrogspawnBlock;
 use crate::block::blocks::furnace::FurnaceBlock;
 use crate::block::blocks::glass_panes::GlassPaneBlock;
 use crate::block::blocks::glazed_terracotta::GlazedTerracottaBlock;
@@ -318,6 +319,7 @@ pub fn default_registry() -> Arc<BlockRegistry> {
     manager.register(DecoratedPotBlock);
     manager.register(CreakingHeartBlock);
     manager.register(SnifferEggBlock);
+    manager.register(FrogspawnBlock);
     manager.register(TurtleEggBlock);
     manager.register(BrushableBlock);
     manager.register(BushBlock);

@@ -96,6 +96,7 @@ pub mod cobweb;
 pub mod dirt_path;
 pub mod dragon_egg;
 pub mod falling;
+pub mod frogspawn;
 pub mod grass_block;
 pub mod ice;
 pub mod infested;
