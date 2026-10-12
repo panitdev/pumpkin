@@ -19,6 +19,8 @@ pub struct TrackTargetGoal {
     check_can_navigate_cooldown: i32,
     time_without_visibility: i32,
     pub max_time_without_visibility: i32,
+    /// Multiplier on the mob's `FOLLOW_RANGE`, for goals that override `getFollowDistance`.
+    follow_range_scale: f64,
     /// Fallback target, used while the mob's own target is cleared.
     target_mob: Option<Arc<dyn EntityBase>>,
 }
@@ -35,8 +37,13 @@ impl TrackTargetGoal {
             check_can_navigate_cooldown: 0,
             time_without_visibility: 0,
             max_time_without_visibility: 60,
+            follow_range_scale: 1.0,
             target_mob: None,
         }
+    }
+
+    pub const fn set_follow_range_scale(&mut self, scale: f64) {
+        self.follow_range_scale = scale;
     }
 
     pub fn with_default(check_visibility: bool) -> Self {
@@ -146,7 +153,8 @@ impl Goal for TrackTargetGoal {
         // Get follow range attribute value and check if target is within range
         let follow_range = mob_entity
             .living_entity
-            .get_attribute_value(&Attributes::FOLLOW_RANGE);
+            .get_attribute_value(&Attributes::FOLLOW_RANGE)
+            * self.follow_range_scale;
 
         if dist_sq > follow_range * follow_range {
             return false;

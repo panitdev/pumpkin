@@ -76,7 +76,9 @@ pub struct ActiveTargetGoal {
     target_predicate: TargetPredicate,
     condition: TargetCondition,
     gate: Option<MobFilter>,
+    start_gate: Option<MobFilter>,
     include_players: bool,
+    follow_range_scale: f64,
 }
 
 impl ActiveTargetGoal {
@@ -109,7 +111,9 @@ impl ActiveTargetGoal {
             target_predicate,
             condition: TargetCondition::Always,
             gate: None,
+            start_gate: None,
             include_players: false,
+            follow_range_scale: 1.0,
         }
     }
 
@@ -135,6 +139,13 @@ impl ActiveTargetGoal {
         self
     }
 
+    /// Extra condition for starting only, e.g. a polar bear with a cub nearby.
+    #[must_use]
+    pub fn gated_on_start_by(mut self: Box<Self>, gate: MobFilter) -> Box<Self> {
+        self.start_gate = Some(gate);
+        self
+    }
+
     #[must_use]
     pub fn with_default(
         mob: &MobEntity,
@@ -155,7 +166,9 @@ impl ActiveTargetGoal {
             target_predicate,
             condition: TargetCondition::Always,
             gate: None,
+            start_gate: None,
             include_players: false,
+            follow_range_scale: 1.0,
         })
     }
 
@@ -200,7 +213,9 @@ impl ActiveTargetGoal {
             target_predicate,
             condition: TargetCondition::Always,
             gate: None,
+            start_gate: None,
             include_players: false,
+            follow_range_scale: 1.0,
         })
     }
 
@@ -208,6 +223,14 @@ impl ActiveTargetGoal {
     #[must_use]
     pub fn including_players(mut self: Box<Self>) -> Box<Self> {
         self.include_players = true;
+        self
+    }
+
+    /// Scales the mob's `FOLLOW_RANGE` for this goal, like a vanilla `getFollowDistance` override.
+    #[must_use]
+    pub fn follow_range_scale(mut self: Box<Self>, scale: f64) -> Box<Self> {
+        self.follow_range_scale = scale;
+        self.track_target_goal.set_follow_range_scale(scale);
         self
     }
 
@@ -219,7 +242,8 @@ impl ActiveTargetGoal {
         let mob_entity = mob.get_mob_entity();
         let follow_range = mob_entity
             .living_entity
-            .get_attribute_value(&Attributes::FOLLOW_RANGE);
+            .get_attribute_value(&Attributes::FOLLOW_RANGE)
+            * self.follow_range_scale;
 
         // Vanilla updates the target conditions with the current follow distance on every search
         self.target_predicate.base_max_distance = follow_range;
@@ -300,7 +324,9 @@ impl ActiveTargetGoal {
 
 impl Goal for ActiveTargetGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        if self.gate.is_some_and(|gate| !gate(mob)) {
+        if self.gate.is_some_and(|gate| !gate(mob))
+            || self.start_gate.is_some_and(|gate| !gate(mob))
+        {
             return false;
         }
         if self.reciprocal_chance > 0

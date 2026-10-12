@@ -23,6 +23,7 @@ use crate::entity::{
         swim::SwimGoal,
         wander_around::WanderAroundGoal,
     },
+    living::LivingEntity,
     mob::{
         Mob, MobEntity,
         neutral::{NeutralData, NeutralMob},
@@ -30,9 +31,25 @@ use crate::entity::{
     passive::animal::Animal,
     player::Player,
 };
+use crate::world::World;
 
 fn is_baby(mob: &dyn Mob) -> bool {
     mob.as_ageable().is_some_and(AgeableMob::is_baby)
+}
+
+/// Vanilla `PolarBear.PolarBearAttackPlayersGoal`: adult bears charge players only while a cub
+/// is nearby.
+fn has_nearby_cub(mob: &dyn Mob) -> bool {
+    let entity = mob.get_entity();
+    let world = entity.world.load();
+    let search_box = entity.bounding_box.load().expand(8.0, 4.0, 8.0);
+    world.get_entities_at_box(&search_box).iter().any(|other| {
+        other.get_entity().entity_type == &EntityType::POLAR_BEAR
+            && other
+                .get_mob()
+                .and_then(Mob::as_ageable)
+                .is_some_and(AgeableMob::is_baby)
+    })
 }
 
 pub struct PolarBearEntity {
@@ -91,7 +108,21 @@ impl PolarBearEntity {
                         .alerting_only(|other| !is_baby(other)),
                 ),
             );
-            // TODO: PolarBearAttackPlayersGoal at 2 -> adults charge when a cub is near.
+            // Goal 2: PolarBearAttackPlayersGoal -> adults charge a player only while a cub is near.
+            target_selector.add_goal(
+                2,
+                Box::new(ActiveTargetGoal::new(
+                    &mob_arc.mob_entity,
+                    &EntityType::PLAYER,
+                    20,
+                    true,
+                    true,
+                    Some(|_: &LivingEntity, _: &World| true),
+                ))
+                .when(TargetCondition::Adult)
+                .gated_on_start_by(has_nearby_cub)
+                .follow_range_scale(0.5),
+            );
             apply_targets(&mut target_selector, &mob_arc.mob_entity, 3, 5, false);
             target_selector.add_goal(
                 4,
