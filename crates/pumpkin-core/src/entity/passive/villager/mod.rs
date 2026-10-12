@@ -101,26 +101,46 @@ fn enchant_trade_item(
     min_level: i32,
     max_level: i32,
 ) -> Option<(ItemStack, i32)> {
-    use pumpkin_data::data_component_impl::EnchantableImpl;
     use rand::RngExt;
 
-    let mut stack = ItemStack::new(1, item);
+    let additional_cost = rng.random_range(min_level..=max_level);
+    let stack = enchant_with_levels(
+        rng,
+        ItemStack::new(1, item),
+        additional_cost,
+        EnchantmentTag::MINECRAFT_ON_TRADED_EQUIPMENT.1,
+    )?;
+    Some((stack, additional_cost))
+}
+
+/// `EnchantmentHelper.enchantItem`: enchants `stack` as if at `enchantment_cost` levels, choosing
+/// from the enchantments in `options`. Returns `None` when nothing could be applied.
+pub(crate) fn enchant_with_levels(
+    rng: &mut impl rand::Rng,
+    mut stack: ItemStack,
+    enchantment_cost: i32,
+    options: &[u16],
+) -> Option<ItemStack> {
+    use pumpkin_data::data_component::DataComponent;
+    use pumpkin_data::data_component_impl::{EnchantableImpl, StoredEnchantmentsImpl};
+    use rand::RngExt;
+    use std::borrow::Cow;
+
+    let is_book = stack.item.id == Item::BOOK.id;
     let enchantability = stack
         .get_data_component::<EnchantableImpl>()
         .map_or(1, |value| value.value);
-    let additional_cost = rng.random_range(min_level..=max_level);
-    let mut level = additional_cost
+    let mut level = enchantment_cost
         + 1
         + rng.random_range(0..=enchantability / 4)
         + rng.random_range(0..=enchantability / 4);
     let bonus = (rng.random::<f32>() + rng.random::<f32>() - 1.0) * 0.15;
     level = ((level as f32 + level as f32 * bonus).round() as i32).max(1);
 
-    let mut available = EnchantmentTag::MINECRAFT_ON_TRADED_EQUIPMENT
-        .1
+    let mut available = options
         .iter()
         .filter_map(|id| Enchantment::from_id(*id as u8))
-        .filter(|enchantment| enchantment.can_enchant(item))
+        .filter(|enchantment| is_book || enchantment.can_enchant(stack.item))
         .filter_map(|enchantment| {
             (1..=enchantment.max_level)
                 .rev()
@@ -137,6 +157,7 @@ fn enchant_trade_item(
         return None;
     }
 
+    let mut chosen = Vec::new();
     while !available.is_empty() {
         let total_weight: i32 = available
             .iter()
@@ -151,7 +172,7 @@ fn enchant_trade_item(
             })
             .unwrap_or(0);
         let (enchantment, enchantment_level) = available[chosen_index];
-        stack.enchant(enchantment, enchantment_level);
+        chosen.push((enchantment, enchantment_level));
 
         if rng.random_range(0..50) > level {
             break;
@@ -159,7 +180,24 @@ fn enchant_trade_item(
         available.retain(|(candidate, _)| candidate.are_compatible(enchantment));
         level /= 2;
     }
-    Some((stack, additional_cost))
+
+    if is_book {
+        stack = ItemStack::new_with_component(
+            1,
+            &Item::ENCHANTED_BOOK,
+            vec![(
+                DataComponent::StoredEnchantments,
+                Some(Box::new(StoredEnchantmentsImpl {
+                    enchantment: Cow::Owned(chosen),
+                })),
+            )],
+        );
+    } else {
+        for (enchantment, enchantment_level) in chosen {
+            stack.enchant(enchantment, enchantment_level);
+        }
+    }
+    Some(stack)
 }
 
 pub(crate) fn apply_random_dye(rng: &mut impl rand::Rng, stack: &mut ItemStack) {
