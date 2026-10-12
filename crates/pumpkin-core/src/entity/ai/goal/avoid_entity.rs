@@ -19,7 +19,10 @@ pub struct AvoidEntityGoal {
     fast_speed: f64,
     target: Option<Arc<dyn EntityBase>>,
     flee_pos: Option<Vector3<f64>>,
+    filter: Option<EntityFilter>,
 }
+
+type EntityFilter = Box<dyn Fn(&dyn EntityBase) -> bool + Send + Sync>;
 
 impl AvoidEntityGoal {
     #[must_use]
@@ -37,7 +40,22 @@ impl AvoidEntityGoal {
             fast_speed,
             target: None,
             flee_pos: None,
+            filter: None,
         }
+    }
+
+    /// Vanilla's `avoidPredicate`: only entities passing it are avoided.
+    #[must_use]
+    pub fn with_filter(
+        mut self,
+        filter: impl Fn(&dyn EntityBase) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.filter = Some(Box::new(filter));
+        self
+    }
+
+    fn passes_filter(&self, entity: &dyn EntityBase) -> bool {
+        self.filter.as_ref().is_none_or(|filter| filter(entity))
     }
 
     fn find_threat(&self, mob: &dyn Mob) -> Option<Arc<dyn EntityBase>> {
@@ -49,11 +67,13 @@ impl AvoidEntityGoal {
             world
                 .get_nearest_player(pos, self.flee_distance, |player| {
                     EntityPredicate::ExceptCreativeOrSpectator.test(player.get_entity())
+                        && self.passes_filter(player.as_ref())
                 })
                 .map(|p| p as Arc<dyn EntityBase>)
         } else {
             world.get_nearest_entity(pos, self.flee_distance, Some(&[self.flee_type]), |entity| {
                 EntityPredicate::ExceptCreativeOrSpectator.test(entity.get_entity())
+                    && self.passes_filter(entity.as_ref())
             })
         }
     }

@@ -5,6 +5,7 @@ use pumpkin_util::math::wrap_degrees;
 use crate::entity::living::LivingEntity;
 use crate::world::World;
 
+use crate::entity::ai::control::move_control::should_jump;
 use crate::entity::ai::pathfinder::amphibious_node_evaluator::AmphibiousNodeEvaluator;
 use crate::entity::ai::pathfinder::binary_heap::BinaryHeap;
 use crate::entity::ai::pathfinder::fly_node_evaluator::FlyNodeEvaluator;
@@ -2086,7 +2087,6 @@ impl PathNavigationTrait for WallClimberNavigation {
                 f64::from(target_pos.0.z) + 0.5,
             );
             let dx = target_center.x - current_pos.x;
-            let dy = target_center.y - current_pos.y;
             let dz = target_center.z - current_pos.z;
             let dist_sq = dx * dx + dz * dz;
 
@@ -2106,11 +2106,14 @@ impl PathNavigationTrait for WallClimberNavigation {
                 let speed = self.inner.inner.speed_modifier
                     * entity.get_attribute_value(&Attributes::MOVEMENT_SPEED);
                 entity.movement_input.store(Vector3::new(0.0, 0.0, speed));
-                if dy > 0.0 {
-                    entity.jumping.store(true, Ordering::SeqCst);
-                } else {
-                    entity.jumping.store(false, Ordering::SeqCst);
-                }
+                // Vanilla wants the block corner coordinates here.
+                let jump = should_jump(
+                    entity,
+                    f64::from(target_pos.0.x) - current_pos.x,
+                    f64::from(target_pos.0.y) - current_pos.y,
+                    f64::from(target_pos.0.z) - current_pos.z,
+                );
+                entity.jumping.store(jump, Ordering::SeqCst);
             }
         }
     }

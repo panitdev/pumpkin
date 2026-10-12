@@ -1,8 +1,39 @@
 use crate::entity::ai::control::{Control, MoveControlTrait};
+use crate::entity::living::LivingEntity;
 use crate::entity::mob::Mob;
 use pumpkin_data::attributes::Attributes;
+use pumpkin_data::block_state::BlockState;
+use pumpkin_data::tag::{self, Taggable};
 use pumpkin_util::math::vector3::Vector3;
 use std::sync::atomic::Ordering;
+
+/// The jump check of vanilla `MoveControl.tick` for a `MOVE_TO` step.
+///
+/// Jumps for a rise above the step height when close, or when standing in a block (not a door
+/// or fence) whose top is above the feet. `xd`, `yd` and `zd` point from the mob to the wanted position.
+pub fn should_jump(living_entity: &LivingEntity, xd: f64, yd: f64, zd: f64) -> bool {
+    let entity = &living_entity.entity;
+    let step_height = living_entity.get_attribute_value(&Attributes::STEP_HEIGHT);
+    if yd > step_height
+        && xd * xd + zd * zd < 1.0f64.max(f64::from(entity.entity_dimension.load().width))
+    {
+        return true;
+    }
+
+    let pos = entity.block_pos.load();
+    let world = entity.world.load();
+    let (block, state_id) = world.get_block_and_state_id(&pos);
+    let state = BlockState::from_id(state_id);
+    let top = state
+        .get_block_collision_shapes_at(&pos)
+        .map(|shape| shape.max.y)
+        .reduce(f64::max);
+    top.is_some_and(|top| {
+        entity.pos.load().y < top + f64::from(pos.0.y)
+            && !block.has_tag(&tag::Block::MINECRAFT_DOORS)
+            && !block.has_tag(&tag::Block::MINECRAFT_FENCES)
+    })
+}
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum Operation {
@@ -79,11 +110,7 @@ impl MoveControlTrait for MoveControl {
                 .movement_input
                 .store(Vector3::new(0.0, 0.0, speed));
 
-            // TODO: Jump if needed (based on collision and height difference)
-            let step_height = living_entity.get_attribute_value(&Attributes::STEP_HEIGHT);
-            if yd > step_height
-                && xd * xd + zd * zd < 1.0f64.max(entity.entity_dimension.load().width as f64)
-            {
+            if should_jump(living_entity, xd, yd, zd) {
                 living_entity.jumping.store(true, Ordering::SeqCst);
                 self.operation = Operation::Jumping;
             }

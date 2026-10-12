@@ -4,7 +4,7 @@ use super::{Controls, Goal};
 use crate::entity::ai::goal::melee_attack::MeleeAttackGoal;
 use crate::entity::mob::Mob;
 
-/// Melee that gives up in daylight: a 1 in 100 chance per check to drop the target.
+/// Melee that gives up in daylight (1 in 100 per check) and won't start while carrying a rider.
 pub struct SpiderAttackGoal {
     melee_attack_goal: MeleeAttackGoal,
 }
@@ -20,7 +20,7 @@ impl SpiderAttackGoal {
 
 impl Goal for SpiderAttackGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        self.melee_attack_goal.can_start(mob)
+        self.melee_attack_goal.can_start(mob) && !mob.get_entity().has_passengers()
     }
 
     fn should_continue(&mut self, mob: &dyn Mob) -> bool {

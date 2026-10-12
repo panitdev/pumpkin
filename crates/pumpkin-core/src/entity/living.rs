@@ -105,6 +105,8 @@ pub struct LivingEntity {
     pub jumping_cooldown: AtomicU8,
 
     pub climbing: AtomicBool,
+    /// Set by a mob that climbs on its own, like the spider's `onClimbable`.
+    pub climbs_walls: AtomicBool,
 
     /// The position where the entity was last climbing, used for death messages
     pub climbing_pos: AtomicCell<Option<BlockPos>>,
@@ -300,6 +302,7 @@ impl LivingEntity {
             jumping: AtomicBool::new(false),
             jumping_cooldown: AtomicU8::new(0),
             climbing: AtomicBool::new(false),
+            climbs_walls: AtomicBool::new(false),
             climbing_pos: AtomicCell::new(None),
             last_attacker_id: AtomicI32::new(0),
             last_attacked_time: AtomicI32::new(0),
@@ -1733,7 +1736,8 @@ impl LivingEntity {
         //     }
         // }
 
-        self.climbing.store(false, Relaxed);
+        self.climbing
+            .store(self.climbs_walls.load(Relaxed), Relaxed);
 
         if self.entity.on_ground.load(SeqCst) {
             self.climbing_pos.store(None);
