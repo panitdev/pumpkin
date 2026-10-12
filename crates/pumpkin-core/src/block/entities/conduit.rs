@@ -29,7 +29,6 @@ pub struct ConduitBlockEntity {
     pub target: Mutex<Option<Uuid>>,
     effect_blocks: Mutex<Vec<BlockPos>>,
     next_ambient_sound: AtomicI64,
-    dirty: AtomicBool,
 }
 
 impl BlockEntity for ConduitBlockEntity {
@@ -116,14 +115,6 @@ impl BlockEntity for ConduitBlockEntity {
         Some(nbt)
     }
 
-    fn is_dirty(&self) -> bool {
-        self.dirty.load(Ordering::Relaxed)
-    }
-
-    fn clear_dirty(&self) {
-        self.dirty.store(false, Ordering::Relaxed);
-    }
-
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -140,7 +131,6 @@ impl ConduitBlockEntity {
             target: Mutex::new(None),
             effect_blocks: Mutex::new(Vec::new()),
             next_ambient_sound: AtomicI64::new(0),
-            dirty: AtomicBool::new(false),
         }
     }
 
@@ -254,7 +244,12 @@ impl ConduitBlockEntity {
         }
         if new != old {
             *guard = new;
-            self.dirty.store(true, Ordering::Relaxed);
+            // Vanilla `sendBlockUpdated`: clients draw the eye tracking `Target`. The lock must be
+            // released first, `chunk_data_nbt` only `try_lock`s it.
+            drop(guard);
+            if let Some(block_entity) = world.get_block_entity(&self.position) {
+                world.update_block_entity(&block_entity);
+            }
         }
     }
 
