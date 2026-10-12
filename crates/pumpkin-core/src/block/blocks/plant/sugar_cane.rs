@@ -5,12 +5,13 @@ use pumpkin_data::{Block, block_properties::CactusLikeProperties, tag};
 use pumpkin_macros::pumpkin_block;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_world::tick::TickPriority;
-use pumpkin_world::world::{BlockAccessor, BlockFlags};
+use pumpkin_world::world::BlockFlags;
 
 use crate::block::{
     BlockBehaviour, CanPlaceAtArgs, GetStateForNeighborUpdateArgs, OnScheduledTickArgs,
     RandomTickArgs,
 };
+use crate::world::World;
 
 #[pumpkin_block("minecraft:sugar_cane")]
 pub struct SugarCaneBlock;
@@ -62,12 +63,13 @@ impl BlockBehaviour for SugarCaneBlock {
     }
 
     fn can_place_at(&self, args: CanPlaceAtArgs<'_>) -> bool {
-        can_place_at(args.block_accessor, args.position)
+        args.world
+            .is_some_and(|world| can_place_at(world, args.position))
     }
 }
 
-fn can_place_at(block_accessor: &dyn BlockAccessor, block_pos: &BlockPos) -> bool {
-    let block_below = block_accessor.get_block(&block_pos.down());
+fn can_place_at(world: &World, block_pos: &BlockPos) -> bool {
+    let block_below = world.get_block(&block_pos.down());
 
     if block_below == &Block::SUGAR_CANE {
         return true;
@@ -75,10 +77,13 @@ fn can_place_at(block_accessor: &dyn BlockAccessor, block_pos: &BlockPos) -> boo
 
     if block_below.has_tag(&tag::Block::MINECRAFT_SUPPORTS_SUGAR_CANE) {
         for direction in HorizontalFacing::all() {
-            let block = block_accessor.get_block(&block_pos.down().offset(direction.to_offset()));
-            // TODO: use fluid
-            if block.has_tag(&tag::Fluid::MINECRAFT_SUPPORTS_SUGAR_CANE_ADJACENTLY)
-                && block.has_tag(&tag::Block::MINECRAFT_SUPPORTS_SUGAR_CANE_ADJACENTLY)
+            let neighbor = block_pos.down().offset(direction.to_offset());
+            if world
+                .get_fluid(&neighbor)
+                .has_tag(&tag::Fluid::MINECRAFT_SUPPORTS_SUGAR_CANE_ADJACENTLY)
+                || world
+                    .get_block(&neighbor)
+                    .has_tag(&tag::Block::MINECRAFT_SUPPORTS_SUGAR_CANE_ADJACENTLY)
             {
                 return true;
             }
