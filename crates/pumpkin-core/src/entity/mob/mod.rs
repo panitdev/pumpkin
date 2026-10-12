@@ -1012,6 +1012,10 @@ pub trait Mob: EntityBase + Send + Sync {
         None
     }
 
+    fn as_squid(&self) -> Option<&dyn crate::entity::passive::squid::SquidMob> {
+        None
+    }
+
     /// Vanilla `LivingEntity.travelInWater` override. Returns whether the mob moved itself.
     fn travel_in_water(&self, _caller: &dyn EntityBase, _movement_input: Vector3<f64>) -> bool {
         false

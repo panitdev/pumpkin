@@ -238,6 +238,9 @@ impl LivingEntity {
         &Block::SLIME_BLOCK,
     ];
 
+    /// Vanilla `LivingEntity` remembers `lastHurtByMob`/`lastHurtByPlayer` for 100 ticks.
+    const LAST_HURT_BY_MOB_TIMEOUT_TICKS: i64 = 100;
+
     fn hurt_sound_for_entity(entity_type: &'static EntityType) -> Sound {
         entity_type.hurt_sound.unwrap_or(Sound::EntityGenericHurt)
     }
@@ -246,7 +249,7 @@ impl LivingEntity {
         entity_type.death_sound.unwrap_or(Sound::EntityGenericDeath)
     }
 
-    fn get_pitch(&self) -> f32 {
+    pub(crate) fn get_pitch(&self) -> f32 {
         let is_baby = self
             .get_mob()
             .and_then(|x| x.as_ageable())
@@ -328,27 +331,11 @@ impl LivingEntity {
     /// 2. Then `last_hurt_by_mob` if hurt within the last 100 ticks.
     /// 3. Fall back to combat tracker's killer entry if available.
     pub fn get_kill_credit(&self) -> Option<Arc<dyn EntityBase>> {
+        if let Some(attacker) = self.last_hurt_by_entity() {
+            return Some(attacker);
+        }
+
         let world = self.entity.world.load();
-        let current_tick = world.level_info.load().day_time;
-
-        let player_id = self.last_hurt_by_player_id.load(Relaxed);
-        let player_time = self.last_hurt_by_player_time.load(Relaxed);
-        if player_id != 0
-            && (current_tick - player_time).abs() <= 100
-            && let Some(player) = world.get_entity_by_id(player_id)
-        {
-            return Some(player);
-        }
-
-        let mob_id = self.last_hurt_by_mob_id.load(Relaxed);
-        let mob_time = self.last_hurt_by_mob_time.load(Relaxed);
-        if mob_id != 0
-            && (current_tick - mob_time).abs() <= 100
-            && let Some(mob) = world.get_entity_by_id(mob_id)
-        {
-            return Some(mob);
-        }
-
         let tracker = self
             .combat_tracker
             .lock()
@@ -360,6 +347,45 @@ impl LivingEntity {
         }
 
         None
+    }
+
+    /// The player or mob that last hurt this entity, within vanilla's 100 tick memory
+    /// window, without checking whether it is still alive.
+    fn last_hurt_by_entity(&self) -> Option<Arc<dyn EntityBase>> {
+        let world = self.entity.world.load();
+        let current_tick = world.level_info.load().day_time;
+
+        let player_id = self.last_hurt_by_player_id.load(Relaxed);
+        let player_time = self.last_hurt_by_player_time.load(Relaxed);
+        if player_id != 0
+            && (current_tick - player_time).abs() <= Self::LAST_HURT_BY_MOB_TIMEOUT_TICKS
+            && let Some(player) = world.get_entity_by_id(player_id)
+        {
+            return Some(player);
+        }
+
+        let mob_id = self.last_hurt_by_mob_id.load(Relaxed);
+        let mob_time = self.last_hurt_by_mob_time.load(Relaxed);
+        if mob_id != 0
+            && (current_tick - mob_time).abs() <= Self::LAST_HURT_BY_MOB_TIMEOUT_TICKS
+            && let Some(mob) = world.get_entity_by_id(mob_id)
+        {
+            return Some(mob);
+        }
+
+        None
+    }
+
+    /// Vanilla `LivingEntity.getLastHurtByMob`: the last living attacker within the
+    /// 100-tick memory window. Vanilla clears the reference in `tick` when the attacker
+    /// dies, so dead attackers are filtered out here.
+    pub fn get_last_hurt_by_mob(&self) -> Option<Arc<dyn EntityBase>> {
+        self.last_hurt_by_entity().filter(|attacker| {
+            attacker.get_entity().is_alive()
+                && attacker
+                    .get_living_entity()
+                    .is_some_and(|living| living.health.load() > 0.0)
+        })
     }
 
     /// Triggers location-based enchantment effects (e.g. Frost Walker) when the entity's block position changes.
