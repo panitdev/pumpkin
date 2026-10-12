@@ -26,6 +26,9 @@ pub mod sweet_berry_bush;
 pub mod torch_flower;
 pub mod wheat;
 
+/// Vanilla `CropBlock.MAX_AGE`.
+pub const MAX_AGE: i32 = 7;
+
 trait CropBlockBase: PlantBlockBase {
     // Deliberately NOT named `can_plant_on_top`: that would collide with the
     // `PlantBlockBase` method of the same name without overriding it, and
@@ -39,7 +42,7 @@ trait CropBlockBase: PlantBlockBase {
     }
 
     fn max_age(&self) -> i32 {
-        7
+        MAX_AGE
     }
 
     fn get_age(&self, state: BlockStateId, _block: &Block) -> i32 {
