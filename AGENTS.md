@@ -2,6 +2,12 @@
 
 Notes for coding agents working on Pumpkin. Humans are welcome to read it too. [CONTRIBUTING.md](CONTRIBUTING.md) still applies. If a maintainer or the person you're working for tells you something different from this file, do what they say, with one exception: agents never open pull requests, even when asked. See the last section.
 
+## This fork
+
+This checkout is a personal fork at [panitdev/pumpkin](https://github.com/panitdev/pumpkin), not upstream Pumpkin, and its work isn't meant to go upstream. Commits land on this fork's `master`. Skip everything aimed at upstream contributions: PR description drafts, the AI disclosure line, required captures and the "Tell the author what they have to do" handover. Vanilla parity, code quality and the checks under "Checking your work" still apply. Still say briefly what needs testing in game.
+
+When you close a beads issue for a gameplay change that nobody has tested in game, add the `needs-playtest` label and append a short "do X, expect Y" checklist to its notes (`bd update <id> --add-label needs-playtest --append-notes "Play test: ..."`). The owner removes the label after testing. `bd list --all --label needs-playtest` shows what's left.
+
 ## What Pumpkin is
 
 Pumpkin is a Minecraft server written from scratch in Rust. It aims to behave like the official (vanilla) Java Edition server while running faster and on more threads. It isn't a fork of the Java code and it can't load Bukkit or Fabric plugins; it has its own native and Wasm plugin APIs.
