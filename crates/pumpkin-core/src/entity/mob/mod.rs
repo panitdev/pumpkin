@@ -916,6 +916,11 @@ pub trait Mob: EntityBase + Send + Sync {
             && world.get_entities_at_box(&bounding_box).is_empty()
     }
 
+    /// Vanilla `Entity.isPushedByFluid`. Drowned opts out while swimming.
+    fn is_pushed_by_fluids(&self) -> bool {
+        true
+    }
+
     /// Per-mob tick hook called each tick before AI runs. Override for mob-specific logic.
     fn mob_tick(&self, _caller: &dyn EntityBase) {}
 
@@ -1350,6 +1355,10 @@ impl<T: Mob + Send + 'static> EntityBase for T {
 
     fn is_pushable(&self) -> bool {
         self.get_mob_entity().living_entity.is_pushable()
+    }
+
+    fn is_pushed_by_fluids(&self) -> bool {
+        Mob::is_pushed_by_fluids(self)
     }
 
     fn on_lightning_strike(

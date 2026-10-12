@@ -155,6 +155,8 @@ pub struct ZombieEntityBase {
     in_water_time: AtomicI32,
     drowned_conversion_time: AtomicI32,
     converting_to_drowned: AtomicBool,
+    /// Vanilla `Drowned.searchingForLand`.
+    searching_for_land: AtomicBool,
 }
 
 impl ZombieEntityBase {
@@ -176,14 +178,19 @@ impl ZombieEntityBase {
             in_water_time: AtomicI32::new(0),
             drowned_conversion_time: AtomicI32::new(NOT_CONVERTING),
             converting_to_drowned: AtomicBool::new(false),
+            searching_for_land: AtomicBool::new(false),
         };
         let mob_arc = Arc::new(zombie);
-        let mob_weak: Weak<dyn Mob> = {
-            let mob_arc: Arc<dyn Mob> = mob_arc.clone();
-            Arc::downgrade(&mob_arc)
-        };
 
-        {
+        // `Drowned.addBehaviourGoals` replaces the whole Zombie behaviour goal set, and the
+        // trident goal needs the Drowned's own `RangedAttackMob` arc, so DrownedEntity
+        // registers its goals itself once it exists.
+        if kind != ZombieKind::Drowned {
+            let mob_weak: Weak<dyn Mob> = {
+                let mob_arc: Arc<dyn Mob> = mob_arc.clone();
+                Arc::downgrade(&mob_arc)
+            };
+
             let mut goal_selector = mob_arc
                 .mob_entity
                 .goals_selector
@@ -238,7 +245,7 @@ impl ZombieEntityBase {
                 5,
                 ActiveTargetGoal::baby_turtle_on_land(&mob_arc.mob_entity),
             );
-        };
+        }
 
         mob_arc
     }
@@ -289,6 +296,36 @@ impl ZombieEntityBase {
     #[must_use]
     pub fn is_baby(&self) -> bool {
         self.is_baby.load(Ordering::Relaxed)
+    }
+}
+
+impl ZombieEntityBase {
+    /// Vanilla `Drowned.isSearchingForLand`.
+    #[must_use]
+    pub fn is_searching_for_land(&self) -> bool {
+        self.searching_for_land.load(Ordering::Relaxed)
+    }
+
+    pub fn set_searching_for_land(&self, searching: bool) {
+        self.searching_for_land.store(searching, Ordering::Relaxed);
+    }
+
+    /// Vanilla `Drowned.wantsToSwim`.
+    #[must_use]
+    pub fn wants_to_swim(&self) -> bool {
+        self.is_searching_for_land()
+            || self
+                .mob_entity
+                .get_target()
+                .is_some_and(|target| target.get_entity().is_in_water())
+    }
+
+    /// Vanilla `Drowned.updateSwimming`.
+    fn update_drowned_swimming(&self) {
+        let entity = &self.mob_entity.living_entity.entity;
+        entity.set_swimming(
+            !self.mob_entity.is_no_ai() && entity.is_under_water() && self.wants_to_swim(),
+        );
     }
 }
 
@@ -388,6 +425,9 @@ impl Mob for ZombieEntityBase {
     fn mob_tick(&self, _caller: &dyn EntityBase) {
         if self.kind.converts_in_water() {
             self.tick_drowning_conversion();
+        }
+        if self.kind == ZombieKind::Drowned {
+            self.update_drowned_swimming();
         }
     }
 
