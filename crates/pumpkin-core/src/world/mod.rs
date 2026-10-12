@@ -6199,6 +6199,19 @@ impl World {
                     .cloned()
             })
             .flatten()?;
+        // Vanilla `promotePendingBlockEntity`: saved data only loads for a block that has a block
+        // entity. Anything else is a leftover and is dropped.
+        if self.get_block_state(block_pos).block_entity_type == u16::MAX {
+            self.level.read_chunk_sync(&chunk_pos, |chunk| {
+                chunk
+                    .pending_block_entities
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(block_pos);
+                chunk.mark_dirty(true);
+            });
+            return None;
+        }
         if let Some(custom_data) = nbt
             .get_compound("PumpkinCustomData")
             .or_else(|| nbt.get_compound("BukkitValues"))
@@ -6337,7 +6350,19 @@ impl World {
                 .is_some_and(|mut chunk_block_entities| {
                     chunk_block_entities.remove(block_pos).is_some()
                 });
-        if removed {
+        // The saved copy goes too, or `get_block_entity` would load it again.
+        let removed_saved = self
+            .level
+            .read_chunk_sync(&chunk_pos, |chunk| {
+                chunk
+                    .pending_block_entities
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(block_pos)
+                    .is_some()
+            })
+            .unwrap_or(false);
+        if removed || removed_saved {
             self.custom_block_entity_data.remove(block_pos);
             // Drop the chunk's map once its last block entity is gone.
             self.block_entities
