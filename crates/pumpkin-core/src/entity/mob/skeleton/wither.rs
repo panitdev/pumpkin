@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::entity::{
     Entity,
-    mob::{Mob, MobEntity, skeleton::SkeletonEntityBase},
+    mob::skeleton::{SkeletonEntityBase, SkeletonKind},
 };
 
 pub struct WitherSkeletonEntity {
@@ -11,14 +11,9 @@ pub struct WitherSkeletonEntity {
 
 impl WitherSkeletonEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
-        let entity = SkeletonEntityBase::new(entity);
-        let skeleton = Self { entity };
-        Arc::new(skeleton)
+        let entity = SkeletonEntityBase::new(entity, SkeletonKind::WitherSkeleton);
+        Arc::new(Self { entity })
     }
 }
 
-impl Mob for WitherSkeletonEntity {
-    fn get_mob_entity(&self) -> &MobEntity {
-        &self.entity.mob_entity
-    }
-}
+skeleton_mob!(WitherSkeletonEntity);

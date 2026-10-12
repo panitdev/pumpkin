@@ -1,8 +1,9 @@
+use std::sync::Arc;
+
 use crate::entity::{
     Entity,
-    mob::{Mob, MobEntity, skeleton::SkeletonEntityBase},
+    mob::skeleton::{SkeletonEntityBase, SkeletonKind},
 };
-use std::sync::Arc;
 
 pub struct BoggedSkeletonEntity {
     entity: Arc<SkeletonEntityBase>,
@@ -10,14 +11,9 @@ pub struct BoggedSkeletonEntity {
 
 impl BoggedSkeletonEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
-        let entity = SkeletonEntityBase::new(entity);
-        let bogged = Self { entity };
-        Arc::new(bogged)
+        let entity = SkeletonEntityBase::new(entity, SkeletonKind::Bogged);
+        Arc::new(Self { entity })
     }
 }
 
-impl Mob for BoggedSkeletonEntity {
-    fn get_mob_entity(&self) -> &MobEntity {
-        &self.entity.mob_entity
-    }
-}
+skeleton_mob!(BoggedSkeletonEntity);

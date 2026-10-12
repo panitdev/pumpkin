@@ -957,6 +957,16 @@ impl LivingEntity {
 
     #[expect(clippy::too_many_lines)]
     pub fn add_effect(&self, effect: Effect) {
+        if let Some(entity) = self
+            .entity
+            .world
+            .load()
+            .get_entity_by_id(self.entity.entity_id)
+            && let Some(mob) = entity.get_mob()
+            && !mob.can_be_affected(&effect)
+        {
+            return;
+        }
         let mut effect_event =
             crate::plugin::api::events::entity::entity_potion_effect::EntityPotionEffectEvent::new(
                 self.entity.entity_id,

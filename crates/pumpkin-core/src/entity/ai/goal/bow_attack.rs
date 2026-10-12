@@ -1,22 +1,20 @@
 use pumpkin_data::data_component_impl::EquipmentSlot;
-use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
-use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_util::Hand;
 use rand::RngExt;
-use std::sync::Arc;
+use std::sync::Weak;
 
 use crate::entity::ai::goal::{Controls, Goal};
 use crate::entity::ai::pathfinder::NavigatorGoal;
-use crate::entity::mob::Mob;
-use crate::entity::projectile::arrow::{ArrowEntity, ArrowPickup};
-use crate::entity::{Entity, EntityBase};
+use crate::entity::mob::{Mob, RangedAttackMob};
+use crate::item::items::bow::BowItem;
 
 /// Ranged bow attack used by skeletons and their variants.
 /// Mirrors vanilla `RangedBowAttackGoal`: the mob keeps its distance, draws the bow
 /// and releases an arrow once it has been drawn long enough.
 pub struct BowAttackGoal {
+    mob: Weak<dyn RangedAttackMob>,
     goal_control: Controls,
     speed: f64,
     attack_interval: i32,
@@ -33,12 +31,16 @@ pub struct BowAttackGoal {
 impl BowAttackGoal {
     /// Ticks the bow has to be drawn before the arrow is released.
     const DRAW_TIME: i32 = 20;
-    /// Vanilla arrow speed for mob shots.
-    const ARROW_SPEED: f64 = 1.6;
 
     #[must_use]
-    pub fn new(speed: f64, attack_interval: i32, range: f32) -> Self {
+    pub fn new(
+        mob: Weak<dyn RangedAttackMob>,
+        speed: f64,
+        attack_interval: i32,
+        range: f32,
+    ) -> Self {
         Self {
+            mob,
             goal_control: Controls::MOVE | Controls::LOOK,
             speed,
             attack_interval,
@@ -53,19 +55,27 @@ impl BowAttackGoal {
         }
     }
 
-    fn main_hand_item(mob: &dyn Mob) -> ItemStack {
+    fn hand_item(mob: &dyn Mob, slot: &EquipmentSlot) -> ItemStack {
         mob.get_mob_entity()
             .living_entity
             .entity_equipment
             .try_lock()
-            .map_or_else(
-                |_| ItemStack::EMPTY.clone(),
-                |eq| eq.get(&EquipmentSlot::MAIN_HAND),
-            )
+            .map_or_else(|_| ItemStack::EMPTY.clone(), |eq| eq.get(slot))
     }
 
     fn is_holding_bow(mob: &dyn Mob) -> bool {
-        Self::main_hand_item(mob).item.id == Item::BOW.id
+        Self::hand_item(mob, &EquipmentSlot::MAIN_HAND).item.id == Item::BOW.id
+            || Self::hand_item(mob, &EquipmentSlot::OFF_HAND).item.id == Item::BOW.id
+    }
+
+    /// Vanilla `ProjectileUtil.getWeaponHoldingHand` for the bow.
+    fn weapon_holding_hand(mob: &dyn Mob) -> (Hand, ItemStack) {
+        let main_hand = Self::hand_item(mob, &EquipmentSlot::MAIN_HAND);
+        if main_hand.item.id == Item::BOW.id {
+            (Hand::Right, main_hand)
+        } else {
+            (Hand::Left, Self::hand_item(mob, &EquipmentSlot::OFF_HAND))
+        }
     }
 
     fn stop_drawing(&mut self, mob: &dyn Mob) {
@@ -74,80 +84,6 @@ impl BowAttackGoal {
             self.drawing = false;
             self.draw_ticks = 0;
         }
-    }
-
-    /// Spawns the arrow, matching vanilla `AbstractSkeleton::performRangedAttack`.
-    fn shoot(mob: &dyn Mob, target: &Arc<dyn EntityBase>) {
-        let entity = mob.get_entity();
-        let world = entity.world.load();
-        let world_full = entity.world.load_full();
-
-        let arrow_entity = Entity::new(world.clone(), entity.pos.load(), &EntityType::ARROW);
-        let projectile = ItemStack::new(1, &Item::ARROW);
-        let bow_item = Self::main_hand_item(mob);
-        let arrow = ArrowEntity::new_shot_with_weapon(
-            arrow_entity,
-            entity,
-            &projectile,
-            &bow_item,
-            ArrowPickup::Disallowed,
-        );
-
-        // Vanilla scales base damage with power and world difficulty
-        let difficulty = world.level_info.load().difficulty as i32;
-        arrow.set_base_damage_from_mob(Self::ARROW_SPEED, difficulty);
-
-        arrow.set_base_damage(crate::enchantment::EnchantmentHelper::modify_damage(
-            &bow_item,
-            arrow.get_base_damage(),
-        ));
-        arrow.punch_level.store(
-            crate::enchantment::EnchantmentHelper::modify_knockback(&bow_item, 0.0) as u8,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        arrow.apply_on_projectile_spawned(&projectile);
-        if entity.is_on_fire() {
-            arrow.set_flame(true);
-        }
-
-        let mob_pos = entity.pos.load();
-        let target_entity = target.get_entity();
-        let target_pos = target_entity.pos.load();
-
-        let dx = target_pos.x - mob_pos.x;
-        let dy = (target_pos.y + f64::from(target_entity.entity_dimension.load().height) / 3.0)
-            - arrow.entity.pos.load().y;
-        let dz = target_pos.z - mob_pos.z;
-        let horizontal_distance = dx.hypot(dz);
-
-        // Vanilla scales the spread with the world difficulty: 14 - difficulty * 4.
-        let divergence = f64::from(14 - difficulty * 4);
-
-        arrow.set_velocity(
-            dx,
-            horizontal_distance.mul_add(0.2, dy),
-            dz,
-            Self::ARROW_SPEED,
-            divergence,
-        );
-
-        world.play_sound(Sound::EntityArrowShoot, SoundCategory::Hostile, &mob_pos);
-
-        let arrow: Arc<dyn EntityBase> = Arc::new(arrow);
-        let entity_id = entity.entity_id;
-        if let Some(server) = world_full.server.upgrade() {
-            let mut event =
-                crate::plugin::api::events::entity::entity_shoot_bow::EntityShootBowEvent::new(
-                    entity_id,
-                    "minecraft:bow".to_string(),
-                    1.0,
-                );
-            server.plugin_manager.fire_blocking(&server, &mut event);
-            if event.cancelled {
-                return;
-            }
-        }
-        world_full.spawn_entity(arrow);
     }
 }
 
@@ -250,18 +186,21 @@ impl Goal for BowAttackGoal {
             } else if has_line_of_sight {
                 self.draw_ticks += 1;
                 if self.draw_ticks >= Self::DRAW_TIME {
+                    let power = BowItem::get_power_for_time(self.draw_ticks);
                     self.stop_drawing(mob);
-                    Self::shoot(mob, &target);
+                    if let Some(ranged) = self.mob.upgrade() {
+                        ranged.perform_ranged_attack(&target, power);
+                    }
                     self.attack_time = self.attack_interval;
                 }
             }
         } else {
             self.attack_time -= 1;
             if self.attack_time <= 0 && self.see_time >= -60 {
-                let stack = Self::main_hand_item(mob);
+                let (hand, stack) = Self::weapon_holding_hand(mob);
                 mob.get_mob_entity()
                     .living_entity
-                    .set_active_hand(Hand::Right, stack, i32::MAX);
+                    .set_active_hand(hand, stack, i32::MAX);
                 self.drawing = true;
                 self.draw_ticks = 0;
             }
