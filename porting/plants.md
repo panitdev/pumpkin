@@ -13,8 +13,8 @@ names; 26.3 renamed `DirtPathBlock` -> `PathBlock` and `WaterlilyBlock` -> `Lily
 | `crates/pumpkin-core/src/block/mod.rs` | added shared `push_entities_up` (vanilla `Block.pushEntitiesUp`) |
 | `crates/pumpkin-core/src/block/blocks/dirt_path.rs` | entity push on tick, fence-gate survive |
 | `crates/pumpkin-core/src/block/blocks/farmland.rs` | reuse the shared `push_entities_up` |
-| `crates/pumpkin-core/src/block/blocks/plant/lily_pad.rs` | fluid-based survival, boat-tag break |
-| `crates/pumpkin-core/src/block/blocks/plant/crop/gourds/stem.rs` | light-level gate on random tick |
+| `crates/pumpkin-core/src/block/blocks/plant/lily_pad.rs` | fluid-based survival, boat downcast break |
+| `crates/pumpkin-core/src/block/blocks/plant/crop/gourds/stem.rs` | random-tick light gate, per-stem fruit-support tag, block flags |
 | `crates/pumpkin-core/src/block/blocks/plant/sea_pickles.rs` | bonemeal via `BonemealableBlock`, fixed spread |
 | `crates/pumpkin-core/src/block/blocks/plant/sugar_cane.rs` | fluid for adjacent support |
 
@@ -34,15 +34,18 @@ names; 26.3 renamed `DirtPathBlock` -> `PathBlock` and `WaterlilyBlock` -> `Lily
 - Survival now checks the fluid, not the block: fluid at the support has
   `#supports_lily_pad`, or the support block does, and the lily pad's own fluid is empty
   (`Fluids.EMPTY`). The old code tested block-vs-fluid-tag and used `is_air`.
-- Boat break uses the entity tag `c:boats` (all boats, chest boats and rafts) instead of the
-  `_boat` name suffix, which missed bamboo rafts.
+- Boat break downcasts the touching entity to `BoatEntity` (vanilla `entity instanceof
+  AbstractBoat`). The `c:boats` entity tag was wrong: it misses `poplar_chest_boat`, and no
+  vanilla entity tag covers every boat, chest boat and raft.
 - Open: `useShapeForLightOcclusion` has no Pumpkin override.
 
 ## Pumpkin & melon stems (`StemBlock`, `AttachedStemBlock`)
 
 - Random tick now requires raw brightness >= 9 before rolling growth, matching
-  `CropBlock.getGrowthSpeed` gating. The growth chance, age cap, fruit placement and
-  attached-stem conversion already matched.
+  `CropBlock.getGrowthSpeed` gating. Age growth uses `NOTIFY_LISTENERS` (vanilla flag 2); the
+  fruit and attached stem use `NOTIFY_ALL` (vanilla `setBlockAndUpdate`), so clients see the
+  update. The fruit now sits on the per-stem `supports_pumpkin_stem_fruit` /
+  `supports_melon_stem_fruit` tag instead of a hardcoded farmland/dirt check.
 - `AttachedStemBlock` needed no change; checked against vanilla.
 
 ## Sea pickles (`SeaPickleBlock`)

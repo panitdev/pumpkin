@@ -53,6 +53,14 @@ impl StemBlock {
             _ => &Block::MELON, // Should never happen
         }
     }
+
+    fn get_fruit_support(block: &Block) -> &'static tag::Tag {
+        if block == &Block::PUMPKIN_STEM {
+            &tag::Block::MINECRAFT_SUPPORTS_PUMPKIN_STEM_FRUIT
+        } else {
+            &tag::Block::MINECRAFT_SUPPORTS_MELON_STEM_FRUIT
+        }
+    }
 }
 
 impl BlockBehaviour for StemBlock {
@@ -92,41 +100,41 @@ impl BlockBehaviour for StemBlock {
     }
 
     fn random_tick(&self, args: RandomTickArgs<'_>) {
-        // TODO add light level check
-        let f: f32 = get_available_moisture(args.world, args.position, args.block);
-        if rand::rng().random_range(0..=(25.0 / f).floor() as i32) == 0 {
-            let (block, state) = args.world.get_block_and_state_id(args.position);
-            let props = StemProperties::from_state_id(state);
-            let age = i32::from(props.age);
-            if age < 7 {
-                args.world.set_block_state(
-                    args.position,
-                    Self::state_with_age(block, state, age + 1),
-                    BlockFlags::NOTIFY_NEIGHBORS,
-                );
-            } else {
-                let dir = BlockDirection::random_horizontal(&mut RandomGenerator::Xoroshiro(
-                    Xoroshiro::from_seed(rand::rng().random()),
-                ));
-                let plant_block_pos = args.position.offset(dir.to_offset());
-                let plant_block_state = args.world.get_block_state(&plant_block_pos);
-                let under_block: &Block = args.world.get_block(&plant_block_pos.down());
-                if plant_block_state.is_air()
-                    && (under_block == &Block::FARMLAND
-                        || under_block.has_tag(&tag::Block::MINECRAFT_DIRT))
-                {
-                    let attached_stem = Self::get_attached_stem(dir, block);
-                    let gourd = Self::get_gourd(block);
-                    args.world.set_block_state(
-                        &plant_block_pos,
-                        gourd.default_state.id,
-                        BlockFlags::NOTIFY_NEIGHBORS,
-                    );
+        if args.world.get_raw_brightness(args.position, 0) >= 9 {
+            let f: f32 = get_available_moisture(args.world, args.position, args.block);
+            if rand::rng().random_range(0..=(25.0 / f).floor() as i32) == 0 {
+                let (block, state) = args.world.get_block_and_state_id(args.position);
+                let props = StemProperties::from_state_id(state);
+                let age = i32::from(props.age);
+                if age < 7 {
                     args.world.set_block_state(
                         args.position,
-                        attached_stem,
-                        BlockFlags::NOTIFY_NEIGHBORS,
+                        Self::state_with_age(block, state, age + 1),
+                        BlockFlags::NOTIFY_LISTENERS,
                     );
+                } else {
+                    let dir = BlockDirection::random_horizontal(&mut RandomGenerator::Xoroshiro(
+                        Xoroshiro::from_seed(rand::rng().random()),
+                    ));
+                    let plant_block_pos = args.position.offset(dir.to_offset());
+                    let plant_block_state = args.world.get_block_state(&plant_block_pos);
+                    let under_block: &Block = args.world.get_block(&plant_block_pos.down());
+                    if plant_block_state.is_air()
+                        && under_block.has_tag(Self::get_fruit_support(block))
+                    {
+                        let attached_stem = Self::get_attached_stem(dir, block);
+                        let gourd = Self::get_gourd(block);
+                        args.world.set_block_state(
+                            &plant_block_pos,
+                            gourd.default_state.id,
+                            BlockFlags::NOTIFY_ALL,
+                        );
+                        args.world.set_block_state(
+                            args.position,
+                            attached_stem,
+                            BlockFlags::NOTIFY_ALL,
+                        );
+                    }
                 }
             }
         }
