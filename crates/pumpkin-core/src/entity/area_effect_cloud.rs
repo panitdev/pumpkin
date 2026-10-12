@@ -343,7 +343,8 @@ impl EntityBase for AreaEffectCloudEntity {
                 continue;
             }
 
-            let scale = 1.0f32 - (dist as f32 / radius_f as f32);
+            // Vanilla gives every entity in range the same scaled effect, without a distance falloff.
+            let scale = 1.0f32;
 
             // Decide whether this contact will actually apply an effect
             let effs_clone = self

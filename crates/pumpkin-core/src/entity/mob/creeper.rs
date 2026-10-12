@@ -20,12 +20,18 @@ use crate::entity::{
         look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, revenge::RevengeGoal,
         swim::SwimGoal, wander_around::WanderAroundGoal,
     },
+    area_effect_cloud::AreaEffectCloudEntity,
     mob::{Mob, MobEntity},
     player::Player,
 };
 
 const DEFAULT_FUSE_TIME: i32 = 30;
 const DEFAULT_EXPLOSION_RADIUS: i32 = 3;
+const CLOUD_RADIUS: f32 = 2.5;
+const CLOUD_RADIUS_ON_USE: f32 = -0.5;
+const CLOUD_WAIT_TIME: i32 = 10;
+const CLOUD_DURATION: i32 = 300;
+const CLOUD_REAPPLICATION_DELAY: i32 = 20;
 
 pub struct CreeperEntity {
     pub mob_entity: MobEntity,
@@ -125,8 +131,51 @@ impl CreeperEntity {
             radius * multiplier,
             crate::world::ExplosionInteraction::Mob,
         );
-        // TODO: spawn area effect cloud with potion effects
+        self.spawn_lingering_cloud();
         entity.remove();
+    }
+
+    fn spawn_lingering_cloud(&self) {
+        let living = &self.mob_entity.living_entity;
+        let effects: Vec<_> = living
+            .active_effects
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .map(|effect| {
+                (
+                    effect.effect_type,
+                    effect.duration,
+                    effect.amplifier,
+                    effect.ambient,
+                    effect.show_particles,
+                    effect.show_icon,
+                )
+            })
+            .collect();
+        if effects.is_empty() {
+            return;
+        }
+
+        let entity = &living.entity;
+        let world = entity.world.load_full();
+        let cloud_entity = Entity::new(
+            world.clone(),
+            entity.pos.load(),
+            &EntityType::AREA_EFFECT_CLOUD,
+        );
+        let cloud = AreaEffectCloudEntity::create(
+            cloud_entity,
+            ItemStack::new(0, &Item::GLASS_BOTTLE),
+            effects,
+            CLOUD_DURATION,
+            CLOUD_RADIUS,
+            CLOUD_REAPPLICATION_DELAY,
+            CLOUD_WAIT_TIME,
+            CLOUD_RADIUS_ON_USE,
+            0,
+        );
+        world.spawn_entity(cloud);
     }
 }
 
