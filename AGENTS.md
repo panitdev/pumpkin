@@ -130,6 +130,7 @@ Read the diff the way a maintainer would. Check three things:
 1. Added lines: each one is checked against vanilla, and there is no duplicated logic, no bare magic numbers and no clunky hand-rolled code.
 2. Removed lines, from `git diff master -- <paths> | grep '^-'`: for each one, can you say where that behaviour went? It should be kept elsewhere, dropped on purpose, or flagged as lost.
 3. Callers: for every shared function, field or trait method you changed, list the other callers and say what changes for each of them.
+4. Consumers: for every flag, field or trait method you set or override to get an effect (a `dirty` flag, a `sends_update_packet` override), find where it is read. If nothing reads it, it does nothing.
 
 ## Scope
 
@@ -137,7 +138,7 @@ Change what the task needs and nothing else. If the task is ambiguous, pick the 
 
 ## Checking your work
 
-CI only runs on the affected packages (`.github/scripts/ci_packages.py`). Locally, run it on the crates you touched plus the crates that depend on them. `cargo-nextest` and `cargo-machete` install with `cargo install`, and `typos` is `typos-cli` on crates.io.
+CI only runs on the affected packages (`.github/scripts/ci_packages.py`). The `pre-commit` hook in `.beads/hooks` runs rustfmt, clippy and `cargo test` on the crates whose files are staged; don't bypass it with `--no-verify`. Locally, run it on the crates you touched plus the crates that depend on them. `cargo-nextest` and `cargo-machete` install with `cargo install`, and `typos` is `typos-cli` on crates.io.
 
 ```bash
 cargo fmt --check

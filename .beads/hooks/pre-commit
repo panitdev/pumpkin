@@ -57,3 +57,28 @@ if command -v bd >/dev/null 2>&1; then
   if [ "$_bd_exit" -ne 0 ]; then exit "$_bd_exit"; fi
 fi
 # --- END BEADS INTEGRATION v1.3.1 ---
+
+# Rust quality gate: fmt, clippy and tests for the crates whose files are staged.
+# Skip with `git commit --no-verify` or SKIP_RUST_HOOK=1. Checks the working tree, not just the index.
+if [ -z "$SKIP_RUST_HOOK" ]; then
+  _crates=$(git diff --cached --name-only --diff-filter=ACMR -- 'crates/*' \
+    | sed -n 's#^crates/\([^/]*\)/.*#\1#p' | sort -u \
+    | while read -r _dir; do
+        [ -f "crates/$_dir/Cargo.toml" ] \
+          && sed -n 's/^name *= *"\(.*\)"/\1/p' "crates/$_dir/Cargo.toml" | head -n 1
+      done)
+  if [ -n "$_crates" ]; then
+    _pkgs=$(printf -- '-p %s ' $_crates)
+    _rs=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs')
+    echo >&2 "pre-commit: checking $(echo $_crates)"
+    if [ -n "$_rs" ] && ! rustfmt --edition 2024 --check $_rs >&2; then
+      echo >&2 "pre-commit: rustfmt failed"; exit 1
+    fi
+    # shellcheck disable=SC2086
+    cargo clippy --quiet $_pkgs --all-targets --all-features \
+      || { echo >&2 "pre-commit: clippy failed"; exit 1; }
+    # shellcheck disable=SC2086
+    cargo test --quiet $_pkgs \
+      || { echo >&2 "pre-commit: tests failed (rerun: cargo test $_pkgs)"; exit 1; }
+  fi
+fi
