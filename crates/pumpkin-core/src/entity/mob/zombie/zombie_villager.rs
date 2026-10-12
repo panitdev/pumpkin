@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use crossbeam::atomic::AtomicCell;
-use pumpkin_data::Block;
 use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::entity::{EntityStatus, EntityType};
 use pumpkin_data::item::Item;
@@ -18,18 +17,15 @@ use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::version::JavaMinecraftVersion;
 use uuid::Uuid;
 
-use crate::entity::mob::zombie::ZombieEntityBase;
-use crate::entity::mob::{Mob, MobEntity};
+use crate::entity::item::ItemEntity;
+use crate::entity::mob::Mob;
+use crate::entity::mob::conversion::{ConversionParams, convert_to};
+use crate::entity::mob::zombie::{ZombieEntityBase, ZombieKind};
 use crate::entity::passive::villager::VillagerEntity;
 use crate::entity::passive::villager::data::{GossipType, VillagerData};
 use crate::entity::player::Player;
 use crate::entity::player::advancement::trigger::AdvancementTrigger;
 use crate::entity::{Entity, EntityBase};
-
-/// Blocks that make a zombie villager's cure tick down faster: iron bars and beds.
-fn speeds_up_conversion(block: &Block) -> bool {
-    block == &Block::IRON_BARS || block.has_tag(&tag::Block::MINECRAFT_BEDS)
-}
 
 pub struct ZombieVillagerEntity {
     pub mob_entity: Arc<ZombieEntityBase>,
@@ -59,7 +55,11 @@ impl ZombieVillagerEntity {
 
     #[must_use]
     pub fn with_can_break_doors(entity: Entity, can_break_doors: bool) -> Arc<Self> {
-        let mob_entity = ZombieEntityBase::with_can_break_doors(entity, can_break_doors);
+        let mob_entity = ZombieEntityBase::with_can_break_doors(
+            entity,
+            ZombieKind::ZombieVillager,
+            can_break_doors,
+        );
         Arc::new(Self {
             mob_entity,
             villager_data: std::sync::Mutex::new(VillagerData::new(
@@ -152,7 +152,7 @@ impl ZombieVillagerEntity {
                         return progress;
                     }
                     let block = world.get_block(&BlockPos::new(block_x, block_y, block_z));
-                    if speeds_up_conversion(block) {
+                    if block.has_tag(&tag::Block::MINECRAFT_SPEEDS_UP_ZOMBIE_VILLAGER_CURING) {
                         if rand::random::<f32>() < 0.3 {
                             progress += 1;
                         }
@@ -169,43 +169,61 @@ impl ZombieVillagerEntity {
     /// it remembers being.
     fn finish_conversion(&self) {
         let entity = self.get_entity();
-        let world = entity.world.load();
-
-        let villager = VillagerEntity::new(Entity::new(
-            world.clone(),
-            entity.pos.load(),
+        let world = entity.world.load_full();
+        let silent = entity.is_silent();
+        let converted = convert_to(
+            self,
+            self.is_baby(),
             &EntityType::VILLAGER,
-        ));
-        let villager_entity = villager.get_entity();
-        villager_entity.set_rotation(entity.yaw.load(), entity.pitch.load());
-        villager_entity.head_yaw.store(entity.head_yaw.load());
-        villager_entity.velocity.store(entity.velocity.load());
-        villager_entity.invulnerable.store(
-            entity.invulnerable.load(Ordering::Relaxed),
-            Ordering::Relaxed,
+            ConversionParams::single(false, false),
+            |converted| {
+                self.drop_preserved_equipment();
+                if let Some(villager) = converted.cast_any().downcast_ref::<VillagerEntity>() {
+                    self.hand_over_to(villager);
+                }
+            },
         );
-        if self.is_baby() {
-            villager_entity
-                .age
-                .store(entity.age.load(Ordering::Relaxed), Ordering::Relaxed);
+        if let Some(converted) = converted
+            && !silent
+        {
+            world.sync_world_event(
+                WorldEvent::SoundZombieConverted,
+                converted.get_entity().block_pos.load(),
+                0,
+            );
         }
-        if let Some(custom_name) = &**entity.custom_name.load() {
-            villager_entity.set_custom_name(custom_name.clone());
-            villager_entity
-                .set_custom_name_visible(entity.custom_name_visible.load(Ordering::Relaxed));
-        }
-        villager
-            .mob_entity
-            .set_no_ai(self.mob_entity.mob_entity.is_no_ai());
-        villager.mob_entity.persistence_required.store(
-            self.mob_entity
-                .mob_entity
-                .persistence_required
-                .load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
+    }
 
-        // Hand the villager back its profession, trades, gossips and trading xp.
+    /// Vanilla `Mob.dropPreservedEquipment`: only slots with a guaranteed drop survive the cure.
+    // TODO: slots with `PREVENT_ARMOR_CHANGE` enchantments move to the villager instead of dropping.
+    fn drop_preserved_equipment(&self) {
+        let mob_entity = &self.mob_entity.mob_entity;
+        let entity = self.get_entity();
+        let world = entity.world.load_full();
+        let slots: Vec<_> = mob_entity
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .equipment
+            .keys()
+            .filter(|slot| mob_entity.drop_chance(slot) > 1.0)
+            .cloned()
+            .collect();
+        for slot in slots {
+            let stack = mob_entity.set_item_slot(&slot, ItemStack::EMPTY.clone());
+            if !stack.is_empty() {
+                world.spawn_entity(Arc::new(ItemEntity::new(
+                    Entity::new(world.clone(), entity.pos.load(), &EntityType::ITEM),
+                    stack,
+                )));
+            }
+        }
+    }
+
+    /// Hands the villager back its profession, trades, gossips and trading xp.
+    fn hand_over_to(&self, villager: &VillagerEntity) {
+        let world = self.get_entity().world.load();
         let data = self.get_villager_data();
         let mut nbt = self
             .villager_nbt
@@ -246,24 +264,12 @@ impl ZombieVillagerEntity {
             show_icon: true,
             blend: false,
         });
-
-        world.spawn_entity(villager);
-        entity.remove();
-
-        if !entity.is_silent() {
-            world.sync_world_event(WorldEvent::SoundZombieConverted, entity.block_pos.load(), 0);
-        }
     }
 }
 
 impl Mob for ZombieVillagerEntity {
-    fn get_mob_entity(&self) -> &MobEntity {
-        &self.mob_entity.mob_entity
-    }
-
-    fn spawn_as_baby(&self) -> bool {
-        self.mob_entity.spawn_as_baby()
-    }
+    zombie_mob_forwards!(mob_entity);
+    zombie_mob_slots!(mob_entity);
 
     fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
         !self.is_converting() && self.villager_xp.load(Ordering::Relaxed) == 0
@@ -311,7 +317,8 @@ impl Mob for ZombieVillagerEntity {
         self.mob_entity.mob_interact(player, item_stack)
     }
 
-    fn mob_tick(&self, _caller: &dyn EntityBase) {
+    fn mob_tick(&self, caller: &dyn EntityBase) {
+        self.mob_entity.mob_tick(caller);
         if !self.get_entity().is_alive() || !self.is_converting() {
             return;
         }
@@ -398,20 +405,5 @@ impl Mob for ZombieVillagerEntity {
         {
             self.start_converting(nbt.get_uuid("ConversionPlayer"), conversion_time);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Block, speeds_up_conversion};
-
-    #[test]
-    fn only_iron_bars_and_beds_speed_up_the_cure() {
-        assert!(speeds_up_conversion(&Block::IRON_BARS));
-        assert!(speeds_up_conversion(&Block::RED_BED));
-        assert!(speeds_up_conversion(&Block::WHITE_BED));
-        assert!(!speeds_up_conversion(&Block::COPPER_BARS));
-        assert!(!speeds_up_conversion(&Block::STONE));
-        assert!(!speeds_up_conversion(&Block::RED_WOOL));
     }
 }

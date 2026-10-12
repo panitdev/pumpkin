@@ -38,6 +38,7 @@ pub mod bat;
 pub mod blaze;
 pub mod breeze;
 pub mod cave_spider;
+pub mod conversion;
 pub mod creaking;
 pub mod creeper;
 pub mod crossbow_attack_mob;
@@ -1011,6 +1012,10 @@ pub trait Mob: EntityBase + Send + Sync {
     }
 
     /// Must return `Some(self)` for every `NeutralMob` implementor. Not compiler-enforced.
+    fn as_zombie(&self) -> Option<&zombie::ZombieEntityBase> {
+        None
+    }
+
     fn as_neutral(&self) -> Option<&dyn neutral::NeutralMob> {
         None
     }

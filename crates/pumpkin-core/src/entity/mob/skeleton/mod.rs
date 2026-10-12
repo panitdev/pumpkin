@@ -26,8 +26,10 @@ use crate::entity::{
         pathfinder::node::PathType,
     },
     item::ItemEntity,
-    living::LivingEntity,
-    mob::{Mob, MobEntity, RangedAttackMob},
+    mob::{
+        Mob, MobEntity, RangedAttackMob,
+        conversion::{ConversionParams, convert_to},
+    },
     player::Player,
     projectile::arrow::{ArrowEntity, ArrowPickup},
 };
@@ -211,20 +213,9 @@ impl SkeletonEntityBase {
                 3,
                 ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::IRON_GOLEM, true),
             );
-            // Turtle.BABY_ON_LAND_SELECTOR
             target_selector.add_goal(
                 3,
-                Box::new(ActiveTargetGoal::new(
-                    &mob_arc.mob_entity,
-                    &EntityType::TURTLE,
-                    10,
-                    true,
-                    false,
-                    Some(|target: &LivingEntity, _world: &World| {
-                        target.entity.age.load(Ordering::Relaxed) < 0
-                            && !target.entity.touching_water.load(Ordering::Relaxed)
-                    }),
-                )),
+                ActiveTargetGoal::baby_turtle_on_land(&mob_arc.mob_entity),
             );
         };
 
@@ -405,84 +396,19 @@ impl SkeletonEntityBase {
 
     /// Vanilla `Mob.convertTo` with `ConversionParams.single(mob, true, true)`.
     fn convert_to_stray(&self) {
-        let entity = self.entity();
-        let world = entity.world.load_full();
-        let pos = entity.pos.load();
-        let stray =
-            crate::entity::r#type::from_type(&EntityType::STRAY, pos, &world, uuid::Uuid::new_v4());
-
-        let stray_entity = stray.get_entity();
-        stray_entity.set_rotation(entity.yaw.load(), entity.pitch.load());
-        stray_entity.head_yaw.store(entity.head_yaw.load());
-        stray_entity.velocity.store(entity.velocity.load());
-        if let Some(custom_name) = &**entity.custom_name.load() {
-            stray_entity.set_custom_name(custom_name.clone());
-        }
-        stray_entity.set_custom_name_visible(entity.custom_name_visible.load(Ordering::Relaxed));
-        stray_entity.has_no_gravity.store(
-            entity.has_no_gravity.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
-        stray_entity.invulnerable.store(
-            entity.invulnerable.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
-        stray_entity.body_yaw.store(entity.body_yaw.load());
-        if entity.is_on_fire() {
-            stray_entity.set_on_fire(true);
-        }
-
-        if let Some(stray_mob) = stray.get_mob() {
-            let new_mob = stray_mob.get_mob_entity();
-            let (old_living, new_living) = (&self.mob_entity.living_entity, &new_mob.living_entity);
-            new_living.set_absorption(old_living.get_absorption());
-            new_living
-                .fall_distance
-                .store(old_living.fall_distance.load());
-            let effects: Vec<_> = old_living
-                .active_effects
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .values()
-                .cloned()
-                .collect();
-            for effect in effects {
-                new_living.add_effect(effect);
-            }
-            new_mob.set_no_ai(self.mob_entity.is_no_ai());
-            new_mob.set_left_handed(self.mob_entity.is_left_handed());
-            new_mob.set_can_pick_up_loot(self.mob_entity.can_pick_up_loot());
-            new_mob.persistence_required.store(
-                self.mob_entity.persistence_required.load(Ordering::Relaxed),
-                Ordering::Relaxed,
-            );
-            for slot in [EquipmentSlot::MAIN_HAND, EquipmentSlot::OFF_HAND]
-                .iter()
-                .chain(&MobEntity::EQUIPMENT_POPULATION_ORDER)
-            {
-                let stack = self.held_item(slot);
-                if !stack.is_empty() {
-                    new_mob
-                        .living_entity
-                        .entity_equipment
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .put(slot, stack);
-                    new_mob
-                        .living_entity
-                        .equipment_drop_chances
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .insert(slot.clone(), self.mob_entity.drop_chance(slot));
-                }
-            }
-        }
-
-        let silent = entity.is_silent();
-        let block_pos = entity.block_pos.load();
-        world.spawn_entity(stray);
-        entity.remove();
-        if !silent {
+        let silent = self.entity().is_silent();
+        let block_pos = self.entity().block_pos.load();
+        let world = self.entity().world.load_full();
+        if convert_to(
+            self,
+            false,
+            &EntityType::STRAY,
+            ConversionParams::single(true, true),
+            |_| {},
+        )
+        .is_some()
+            && !silent
+        {
             world.sync_world_event(WorldEvent::SoundSkeletonToStray, block_pos, 0);
         }
     }

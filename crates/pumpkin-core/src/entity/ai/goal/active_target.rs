@@ -13,6 +13,7 @@ use pumpkin_data::attributes::Attributes;
 use pumpkin_data::entity::EntityType;
 use rand::RngExt;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 const DEFAULT_RECIPROCAL_CHANCE: i32 = 10;
@@ -145,6 +146,22 @@ impl ActiveTargetGoal {
             condition: TargetCondition::Always,
             gate: None,
         })
+    }
+
+    /// Vanilla `NearestAttackableTargetGoal` on turtles with `Turtle.BABY_ON_LAND_SELECTOR`.
+    #[must_use]
+    pub fn baby_turtle_on_land(mob: &MobEntity) -> Box<Self> {
+        Box::new(Self::new(
+            mob,
+            &EntityType::TURTLE,
+            DEFAULT_RECIPROCAL_CHANCE,
+            true,
+            false,
+            Some(|target: &LivingEntity, _world: &World| {
+                target.entity.age.load(Ordering::Relaxed) < 0
+                    && !target.entity.touching_water.load(Ordering::Relaxed)
+            }),
+        ))
     }
 
     /// Targets the closest entity of any type passing `predicate`, like vanilla's

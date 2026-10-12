@@ -3483,6 +3483,30 @@ impl EntityBase for LivingEntity {
                         .on_use_tick(item, player, remaining_use_ticks);
                 }
             }
+        } else if self.item_use_time.load(Ordering::Relaxed) > 0 {
+            // Vanilla `LivingEntity.updateUsingItem`: a mob charging a kinetic weapon stabs too.
+            let item_in_use = self
+                .item_in_use
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            let hand = *self
+                .active_hand
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(item) = item_in_use.as_ref()
+                && let Some(hand) = hand
+                && item
+                    .get_data_component::<pumpkin_data::data_component_impl::KineticWeaponImpl>()
+                    .is_some()
+            {
+                crate::item::items::spear::SpearItem::kinetic_attack(
+                    item,
+                    caller,
+                    hand,
+                    self.item_use_time.load(Ordering::Relaxed),
+                );
+            }
         }
 
         // Current active item
