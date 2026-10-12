@@ -2084,29 +2084,31 @@ impl LivingEntity {
             // Drop loot
             self.drop_loot(&params);
 
-            // A sculk catalyst in range soaks up the experience as spreading charge instead.
-            let mut experience_consumed = false;
-            let drops_experience = match dyn_self.get_player() {
-                Some(player) => {
-                    player.gamemode.load() != GameMode::Spectator
-                        && !world.level_info.load().game_rules.keep_inventory
-                }
-                None => true,
+            // A sculk catalyst in range soaks up the experience as spreading charge instead, and
+            // blooms (consuming the drop) even when there is no experience to spread.
+            let death_pos = self.entity.pos.load();
+            let experience_consumed = if let Some(block_entity) =
+                SculkCatalystBlockEntity::find_near(&world, death_pos)
+                && let Some(catalyst) = block_entity
+                    .as_any()
+                    .downcast_ref::<SculkCatalystBlockEntity>()
+            {
+                // Vanilla `Player.getBaseExperienceReward` / `LivingEntity.shouldDropExperience`.
+                let player_keeps_experience = dyn_self.get_player().is_some_and(|player| {
+                    player.gamemode.load() == GameMode::Spectator
+                        || world.level_info.load().game_rules.keep_inventory
+                });
+                let amount =
+                    if player_keeps_experience || !world.level_info.load().game_rules.mob_drops {
+                        0
+                    } else {
+                        dyn_self.get_experience_reward(killer)
+                    };
+                catalyst.on_entity_die(&world, death_pos, amount);
+                true
+            } else {
+                false
             };
-            if drops_experience {
-                let amount = dyn_self.get_experience_reward(killer);
-                let death_pos = self.entity.pos.load();
-                if amount > 0
-                    && let Some(block_entity) =
-                        SculkCatalystBlockEntity::find_near(&world, death_pos)
-                    && let Some(catalyst) = block_entity
-                        .as_any()
-                        .downcast_ref::<SculkCatalystBlockEntity>()
-                {
-                    catalyst.on_entity_die(&world, death_pos, amount);
-                    experience_consumed = true;
-                }
-            }
 
             // Award experience
             if !experience_consumed
