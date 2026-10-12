@@ -18,9 +18,8 @@ use rustc_hash::FxHashMap;
 
 use crate::{
     block::{
-        BlockBehaviour, BlockMetadata, BrokenArgs, OnNeighborUpdateArgs, OnPlaceArgs,
-        OnSyncedBlockEventArgs, PathComputationType, PlacedArgs,
-        blocks::{piston::piston_head::PistonHeadProperties, redstone::is_emitting_redstone_power},
+        BlockBehaviour, BlockMetadata, OnNeighborUpdateArgs, OnPlaceArgs, OnSyncedBlockEventArgs,
+        PathComputationType, PlacedArgs, blocks::redstone::is_emitting_redstone_power,
     },
     world::World,
 };
@@ -100,28 +99,6 @@ impl BlockBehaviour for PistonBlock {
         props.extended = false;
         props.facing = args.player.get_entity().get_facing().opposite();
         props.to_state_id(args.block)
-    }
-
-    fn broken(&self, args: BrokenArgs<'_>) {
-        let props = PistonProps::from_state_id(args.state.id);
-        let pos = args
-            .position
-            .offset(props.facing.to_block_direction().to_offset());
-        let (block_to_check, block_to_check_state_id) = args.world.get_block_and_state_id(&pos);
-        if &Block::PISTON_HEAD == block_to_check {
-            let head_props = PistonHeadProperties::from_state_id(block_to_check_state_id);
-
-            if (head_props.facing.to_block_direction() != props.facing.to_block_direction())
-                && &Block::PISTON_HEAD == block_to_check
-            {
-                //Then this is a head of some other piston.
-                return;
-            }
-
-            args.world.break_block(&pos, None, BlockFlags::SKIP_DROPS);
-        } else if &Block::MOVING_PISTON == block_to_check {
-            args.world.break_block(&pos, None, BlockFlags::SKIP_DROPS);
-        }
     }
 
     fn placed(&self, args: PlacedArgs<'_>) {

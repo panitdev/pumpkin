@@ -87,6 +87,11 @@
 19. **`getNeighborSignal`**: dropped the bogus "block below" check. Vanilla's
     `hasSignal(pos, DOWN)` is evaluated on the piston itself, which is never a conductor or a
     signal source, so it never fires.
+20. **Breaking the base** no longer removes the head itself. The old `PistonBlock::broken` did that
+    with `break_block(SKIP_DROPS)`, which has no `NOTIFY_LISTENERS`, so clients weren't told: a
+    client still animating the extension placed the head itself and kept it until rejoining
+    (Pumpkin-747.36). Like vanilla, the head now goes through its `updateShape` survival check, and a
+    moving piston that finishes without its base removes the head right away.
 
 ## Still open
 
