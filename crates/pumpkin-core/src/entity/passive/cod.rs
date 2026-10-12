@@ -1,14 +1,12 @@
 use std::sync::{Arc, Weak};
 
-use pumpkin_data::entity::EntityType;
+use pumpkin_data::sound::Sound;
+use pumpkin_util::math::vector3::Vector3;
 
 use crate::entity::{
-    Entity,
-    ai::goal::{
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, swim::SwimGoal,
-        wander_around::WanderAroundGoal,
-    },
+    Entity, EntityBase,
     mob::{Mob, MobEntity},
+    passive::fish::{self, AbstractFish, AbstractSchoolingFish, FishState},
 };
 
 /// Represents a Cod, a common passive aquatic mob.
@@ -16,40 +14,56 @@ use crate::entity::{
 /// Wiki: <https://minecraft.wiki/w/Cod>
 pub struct CodEntity {
     pub mob_entity: MobEntity,
+    schooling: FishState,
 }
 
 impl CodEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
-        let cod = Self { mob_entity };
+        let cod = Self {
+            mob_entity,
+            schooling: FishState::default(),
+        };
         let mob_arc = Arc::new(cod);
-        let mob_weak: Weak<dyn Mob> = {
-            let mob_arc: Arc<dyn Mob> = mob_arc.clone();
-            Arc::downgrade(&mob_arc)
+        let entity_weak: Weak<dyn EntityBase> = {
+            let entity_arc: Arc<dyn EntityBase> = mob_arc.clone();
+            Arc::downgrade(&entity_arc)
         };
 
-        {
-            let mut goal_selector = mob_arc
-                .mob_entity
-                .goals_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-            goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(1, Box::new(WanderAroundGoal::new(1.0)));
-            goal_selector.add_goal(
-                2,
-                LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
-            );
-            goal_selector.add_goal(3, Box::new(RandomLookAroundGoal::default()));
-        };
+        fish::register_fish(&mob_arc.mob_entity);
+        fish::register_schooling_goals(&mob_arc.mob_entity, &entity_weak);
 
         mob_arc
+    }
+}
+
+impl AbstractFish for CodEntity {
+    fn flop_sound(&self) -> Sound {
+        Sound::EntityCodFlop
+    }
+}
+
+impl AbstractSchoolingFish for CodEntity {
+    fn schooling(&self) -> &FishState {
+        &self.schooling
     }
 }
 
 impl Mob for CodEntity {
     fn get_mob_entity(&self) -> &MobEntity {
         &self.mob_entity
+    }
+
+    fn as_schooling_fish(&self) -> Option<&dyn AbstractSchoolingFish> {
+        Some(self)
+    }
+
+    fn mob_tick(&self, _caller: &dyn EntityBase) {
+        fish::fish_tick(self);
+    }
+
+    fn travel_in_water(&self, caller: &dyn EntityBase, movement_input: Vector3<f64>) -> bool {
+        fish::fish_travel_in_water(self, caller, movement_input);
+        true
     }
 }

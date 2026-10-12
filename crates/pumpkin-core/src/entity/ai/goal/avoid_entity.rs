@@ -3,13 +3,34 @@ use std::sync::Arc;
 use super::{Controls, Goal};
 use crate::entity::ai::util::default_random_pos;
 use crate::entity::predicate::EntityPredicate;
-use crate::entity::{EntityBase, ai::pathfinder::NavigatorGoal, mob::Mob};
+use crate::entity::{Entity, EntityBase, ai::pathfinder::NavigatorGoal, mob::Mob};
 use pumpkin_data::entity::EntityType;
 use pumpkin_util::math::vector3::Vector3;
 
 const FAST_DISTANCE_SQ: f64 = 49.0;
 const HORIZONTAL_RANGE: i32 = 16;
 const VERTICAL_RANGE: i32 = 7;
+
+/// Vanilla's `predicateOnAvoidEntity`: which entities are eligible to be avoided.
+#[derive(Clone, Copy, Default)]
+pub enum AvoidSelector {
+    /// `EntitySelector.NO_CREATIVE_OR_SPECTATOR`, the constructor default.
+    #[default]
+    ExceptCreativeOrSpectator,
+    /// `EntitySelector.NO_SPECTATORS`.
+    ExceptSpectator,
+}
+
+impl AvoidSelector {
+    fn test(self, entity: &Entity) -> bool {
+        match self {
+            Self::ExceptCreativeOrSpectator => {
+                EntityPredicate::ExceptCreativeOrSpectator.test(entity)
+            }
+            Self::ExceptSpectator => EntityPredicate::ExceptSpectator.test(entity),
+        }
+    }
+}
 
 pub struct AvoidEntityGoal {
     goal_control: Controls,
@@ -20,6 +41,7 @@ pub struct AvoidEntityGoal {
     target: Option<Arc<dyn EntityBase>>,
     flee_pos: Option<Vector3<f64>>,
     filter: Option<EntityFilter>,
+    selector: AvoidSelector,
 }
 
 type EntityFilter = Box<dyn Fn(&dyn EntityBase) -> bool + Send + Sync>;
@@ -41,6 +63,7 @@ impl AvoidEntityGoal {
             target: None,
             flee_pos: None,
             filter: None,
+            selector: AvoidSelector::default(),
         }
     }
 
@@ -51,6 +74,13 @@ impl AvoidEntityGoal {
         filter: impl Fn(&dyn EntityBase) -> bool + Send + Sync + 'static,
     ) -> Self {
         self.filter = Some(Box::new(filter));
+        self
+    }
+
+    /// Overrides the selector vanilla passes as `predicateOnAvoidEntity`.
+    #[must_use]
+    pub const fn with_selector(mut self, selector: AvoidSelector) -> Self {
+        self.selector = selector;
         self
     }
 
@@ -66,14 +96,12 @@ impl AvoidEntityGoal {
         if self.flee_type == &EntityType::PLAYER {
             world
                 .get_nearest_player(pos, self.flee_distance, |player| {
-                    EntityPredicate::ExceptCreativeOrSpectator.test(player.get_entity())
-                        && self.passes_filter(player.as_ref())
+                    self.selector.test(player.get_entity()) && self.passes_filter(player.as_ref())
                 })
                 .map(|p| p as Arc<dyn EntityBase>)
         } else {
             world.get_nearest_entity(pos, self.flee_distance, Some(&[self.flee_type]), |entity| {
-                EntityPredicate::ExceptCreativeOrSpectator.test(entity.get_entity())
-                    && self.passes_filter(entity.as_ref())
+                self.selector.test(entity.get_entity()) && self.passes_filter(entity.as_ref())
             })
         }
     }
