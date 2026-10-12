@@ -978,11 +978,11 @@ impl HostBellBlockEntity for PluginHostState {
     }
 
     fn is_ringing(&mut self, res: Resource<BellBlockEntity>) -> wasmtime::Result<bool> {
-        Ok(self.get(&res)?.ringing.load())
+        Ok(self.get(&res)?.shaking.load())
     }
 
     fn get_ring_ticks(&mut self, res: Resource<BellBlockEntity>) -> wasmtime::Result<i32> {
-        Ok(self.get(&res)?.ring_ticks.load())
+        Ok(self.get(&res)?.ticks.load())
     }
 
     fn drop(&mut self, rep: Resource<BellBlockEntity>) -> wasmtime::Result<()> {

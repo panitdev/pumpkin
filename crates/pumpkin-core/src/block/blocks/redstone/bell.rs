@@ -4,12 +4,14 @@ use crate::block::blocks::redstone::block_receives_redstone_power;
 use crate::block::entities::bell::BellBlockEntity;
 use crate::block::registry::BlockActionResult;
 use crate::block::{
-    BlockBehaviour, BlockHitResult, BrokenArgs, CanPlaceAtArgs, NormalUseArgs,
-    OnNeighborUpdateArgs, OnPlaceArgs, OnProjectileHitArgs, PathComputationType, PlacedArgs,
+    BlockBehaviour, BlockHitResult, BrokenArgs, CanPlaceAtArgs, ExplodeArgs, NormalUseArgs,
+    OnNeighborUpdateArgs, OnPlaceArgs, OnProjectileHitArgs, OnSyncedBlockEventArgs,
+    PathComputationType, PlacedArgs,
 };
 use crate::world::World;
 use pumpkin_data::block_properties::HorizontalFacing;
 use pumpkin_data::block_properties::{AttachFace, BellAttachment, BellLikeProperties};
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::sound::Sound;
 use pumpkin_data::sound::SoundCategory;
 use pumpkin_data::tag::Taggable;
@@ -22,13 +24,13 @@ use pumpkin_world::world::BlockFlags;
 fn ring_bell(
     position: BlockPos,
     world: &Arc<World>,
-    hit_direction: Option<HorizontalFacing>,
+    hit_direction: Option<BlockDirection>,
     entity: Option<Arc<dyn crate::entity::EntityBase>>,
 ) -> bool {
     let mut event = crate::plugin::block::bell_ring::BellRingEvent {
         block_pos: position,
         world: world.clone(),
-        direction: hit_direction.map(|d| d.to_block_direction()),
+        direction: hit_direction,
         entity,
         cancelled: false,
     };
@@ -42,23 +44,24 @@ fn ring_bell(
     let (_block, state_id) = world.get_block_and_state_id(&position);
 
     let props = BellLikeProperties::from_state_id(state_id);
-    let direction = hit_direction.unwrap_or(props.facing);
+    let direction = hit_direction.unwrap_or_else(|| props.facing.to_block_direction());
 
-    if let Some(block_entity) = world.get_block_entity(&position)
-        && let Some(be) = block_entity.as_any().downcast_ref::<BellBlockEntity>()
-    {
-        be.activate(direction);
-    }
+    let Some(block_entity) = world.get_block_entity(&position) else {
+        return false;
+    };
+    let Some(bell) = block_entity.as_any().downcast_ref::<BellBlockEntity>() else {
+        return false;
+    };
+    bell.on_hit(world, direction);
 
     world.play_sound_fine(
         Sound::BlockBellUse,
         SoundCategory::Blocks,
         &position.to_centered_f64(),
-        1.0,
         2.0,
+        1.0,
     );
-
-    //TODO Emit game event: BLOCK_CHANGE -> Send block update Packet
+    world.emit_game_event(GameEvent::BlockChange.name(), position.to_centered_f64());
     true
 }
 
@@ -149,7 +152,7 @@ impl BlockBehaviour for BellBlock {
         if !ring_bell(
             *args.position,
             args.world,
-            args.hit.face.to_horizontal_facing(),
+            Some(*args.hit.face),
             Some(args.player.clone()),
         ) {
             return BlockActionResult::Pass;
@@ -201,17 +204,16 @@ impl BlockBehaviour for BellBlock {
         let mut props = BellLikeProperties::from_state_id(state.id);
 
         if props.powered != is_receiving_power {
-            props.powered = is_receiving_power;
+            if is_receiving_power {
+                ring_bell(*args.position, args.world, None, None);
+            }
 
+            props.powered = is_receiving_power;
             args.world.set_block_state(
                 args.position,
                 props.to_state_id(args.block),
                 BlockFlags::NOTIFY_ALL,
             );
-
-            if is_receiving_power {
-                ring_bell(*args.position, args.world, None, None);
-            }
         }
     }
 
@@ -235,6 +237,22 @@ impl BlockBehaviour for BellBlock {
                 1,
             );
         }
+    }
+
+    fn on_synced_block_event(&self, args: OnSyncedBlockEventArgs<'_>) -> bool {
+        args.world
+            .get_block_entity(args.position)
+            .and_then(|block_entity| {
+                block_entity
+                    .as_any()
+                    .downcast_ref::<BellBlockEntity>()
+                    .map(|bell| bell.trigger_event(args.world, args.r#type, args.data))
+            })
+            .unwrap_or(false)
+    }
+
+    fn explode(&self, args: ExplodeArgs<'_>) {
+        ring_bell(*args.position, args.world, None, None);
     }
 
     fn is_pathfindable(&self, _state: &BlockState, _computation_type: PathComputationType) -> bool {
