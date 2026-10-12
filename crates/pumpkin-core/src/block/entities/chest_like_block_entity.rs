@@ -254,7 +254,7 @@ macro_rules! impl_viewer_count_listener_for_chest {
                 world: &Arc<$crate::world::World>,
                 _position: &pumpkin_util::math::position::BlockPos,
             ) {
-                self.play_sound(world, pumpkin_data::sound::Sound::BlockChestOpen);
+                self.play_sound(world, true);
             }
 
             fn on_container_close(
@@ -262,7 +262,7 @@ macro_rules! impl_viewer_count_listener_for_chest {
                 world: &Arc<$crate::world::World>,
                 _position: &pumpkin_util::math::position::BlockPos,
             ) {
-                self.play_sound(world, pumpkin_data::sound::Sound::BlockChestClose);
+                self.play_sound(world, false);
             }
 
             fn on_viewer_count_update(
@@ -322,11 +322,7 @@ macro_rules! impl_chest_helper_methods {
                 }
             }
 
-            fn play_sound(
-                &self,
-                world: &Arc<$crate::world::World>,
-                sound: pumpkin_data::sound::Sound,
-            ) {
+            fn play_sound(&self, world: &Arc<$crate::world::World>, open: bool) {
                 let mut rng = pumpkin_util::random::xoroshiro128::Xoroshiro::from_seed(
                     pumpkin_util::random::get_seed(),
                 );
@@ -356,6 +352,7 @@ macro_rules! impl_chest_helper_methods {
                     }
                 };
 
+                let sound = $crate::block::blocks::chests::chest_hinge_sound(state.id, open);
                 world.play_sound_fine(
                     sound,
                     pumpkin_data::sound::SoundCategory::Blocks,
@@ -363,11 +360,7 @@ macro_rules! impl_chest_helper_methods {
                     0.5,
                     pumpkin_util::random::RandomImpl::next_f32(&mut rng) * 0.1 + 0.9,
                 );
-                let bedrock_sound = match sound {
-                    pumpkin_data::sound::Sound::BlockChestOpen => "chest.open",
-                    pumpkin_data::sound::Sound::BlockChestClose => "chest.closed",
-                    _ => return,
-                };
+                let bedrock_sound = if open { "chest.open" } else { "chest.closed" };
                 world.play_bedrock_level_sound(bedrock_sound, &position, 0);
             }
         }

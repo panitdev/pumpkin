@@ -1,11 +1,16 @@
 use std::sync::Arc;
 
+use crate::block::blocks::weathering_copper::{WeatherState, get_weather_state};
 use crate::block::entities::BlockEntity;
 use crate::block::entities::chest::ChestBlockEntity;
 use pumpkin_data::BlockStateId;
+use pumpkin_data::HorizontalFacingExt;
 use pumpkin_data::block_properties::{ChestLikeProperties, ChestType, HorizontalFacing};
 use pumpkin_data::entity::EntityPose;
+use pumpkin_data::fluid::Fluid;
 use pumpkin_data::loot_table::get_loot_table;
+use pumpkin_data::sound::Sound;
+use pumpkin_data::tag::Taggable;
 use pumpkin_data::{Block, BlockDirection, translation};
 use pumpkin_inventory::Inventory;
 use pumpkin_inventory::double::DoubleInventory;
@@ -16,18 +21,23 @@ use pumpkin_inventory::screen_handler::{
 };
 use pumpkin_macros::{pumpkin_block, pumpkin_block_from_tag};
 use pumpkin_util::GameMode;
+use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
+use pumpkin_util::math::vector3::Vector3;
 use pumpkin_util::text::TextComponent;
+use pumpkin_world::tick::TickPriority;
 use pumpkin_world::world::BlockFlags;
 use std::sync::Mutex;
 
 use crate::block::{
     BlockBehaviour, BrokenArgs, EmitsRedstonePowerArgs, GetComparatorOutputArgs,
-    GetRedstonePowerArgs, GetScreenHandlerFactoryArgs, NormalUseArgs, OnPlaceArgs,
-    OnSyncedBlockEventArgs, PathComputationType, PlacedArgs, RandomTickArgs,
-    registry::BlockActionResult,
+    GetRedstonePowerArgs, GetScreenHandlerFactoryArgs, GetStateForNeighborUpdateArgs,
+    NormalUseArgs, OnPlaceArgs, OnSyncedBlockEventArgs, PathComputationType, PlacedArgs,
+    RandomTickArgs, registry::BlockActionResult,
 };
 use crate::entity::EntityBase;
+use crate::entity::passive::cat::CatEntity;
+use crate::entity::passive::tamable::TamableAnimal;
 use crate::entity::player::Player;
 use crate::world::World;
 use crate::world::loot::fill_chest_inventory;
@@ -85,7 +95,13 @@ fn on_place_chest_impl(args: &OnPlaceArgs<'_>) -> BlockStateId {
     chest_props.facing = facing;
     chest_props.r#type = r#type;
 
-    chest_props.to_state_id(args.block)
+    let block = least_oxidized_connected_block(
+        args.world,
+        Block::from_state_id(args.block.default_state.id),
+        args.position,
+        chest_props,
+    );
+    chest_props.to_state_id(block)
 }
 
 fn placed_chest_impl<E: BlockEntity + 'static>(
@@ -102,9 +118,11 @@ fn placed_chest_impl<E: BlockEntity + 'static>(
         ChestType::Right => chest_props.facing.rotate_counter_clockwise(),
     };
 
-    if let Some(mut neighbor_props) = get_chest_properties_if_can_connect(
+    // The partner takes over the placed block, so a copper pair always shares one weathering stage.
+    let placed_block = Block::from_state_id(args.state_id);
+    if let Some((_, mut neighbor_props)) = get_chest_properties_if_can_connect(
         args.world,
-        args.block,
+        placed_block,
         args.position,
         chest_props.facing,
         connected_towards,
@@ -114,7 +132,7 @@ fn placed_chest_impl<E: BlockEntity + 'static>(
 
         args.world.set_block_state(
             &args.position.offset(connected_towards.to_offset()),
-            neighbor_props.to_state_id(args.block),
+            neighbor_props.to_state_id(placed_block),
             BlockFlags::NOTIFY_LISTENERS,
         );
     }
@@ -275,7 +293,7 @@ fn broken_chest_impl(args: &BrokenArgs<'_>) {
         ChestType::Right => chest_props.facing.rotate_counter_clockwise(),
     };
 
-    if let Some(mut neighbor_props) = get_chest_properties_if_can_connect(
+    if let Some((neighbor_block, mut neighbor_props)) = get_chest_properties_if_can_connect(
         args.world,
         args.block,
         args.position,
@@ -287,10 +305,39 @@ fn broken_chest_impl(args: &BrokenArgs<'_>) {
 
         args.world.set_block_state(
             &args.position.offset(connected_towards.to_offset()),
-            neighbor_props.to_state_id(args.block),
+            neighbor_props.to_state_id(neighbor_block),
             BlockFlags::NOTIFY_LISTENERS,
         );
     }
+}
+
+/// Vanilla `updateShape`: keeps the water ticking and lets a copper chest adopt the block of its
+/// connected partner (so waxing or weathering one half changes both).
+fn chest_state_for_neighbor_update(args: &GetStateForNeighborUpdateArgs<'_>) -> BlockStateId {
+    let props = ChestLikeProperties::from_state_id(args.state_id);
+    if props.waterlogged {
+        args.world.schedule_fluid_tick(
+            &Fluid::WATER,
+            *args.position,
+            Fluid::WATER.flow_speed as u8,
+            TickPriority::Normal,
+        );
+    }
+
+    if is_copper_chest(args.block) && props.r#type != ChestType::Single {
+        let connected_dir = match props.r#type {
+            ChestType::Left => props.facing.rotate_clockwise(),
+            _ => props.facing.rotate_counter_clockwise(),
+        };
+        let neighbor = Block::from_state_id(args.neighbor_state_id);
+        if args.direction == connected_dir.to_block_direction()
+            && is_copper_chest(neighbor)
+            && neighbor != args.block
+        {
+            return props.to_state_id(neighbor);
+        }
+    }
+    args.state_id
 }
 
 #[pumpkin_block_from_tag("c:chests/wooden")]
@@ -318,6 +365,13 @@ impl BlockBehaviour for ChestBlock {
         args: GetScreenHandlerFactoryArgs<'_>,
     ) -> Option<Box<dyn ScreenHandlerFactory>> {
         get_chest_screen_handler_factory(args)
+    }
+
+    fn get_state_for_neighbor_update(
+        &self,
+        args: GetStateForNeighborUpdateArgs<'_>,
+    ) -> BlockStateId {
+        chest_state_for_neighbor_update(&args)
     }
 
     fn broken(&self, args: BrokenArgs<'_>) {
@@ -395,6 +449,13 @@ impl BlockBehaviour for CopperChestBlock {
         get_chest_screen_handler_factory(args)
     }
 
+    fn get_state_for_neighbor_update(
+        &self,
+        args: GetStateForNeighborUpdateArgs<'_>,
+    ) -> BlockStateId {
+        chest_state_for_neighbor_update(&args)
+    }
+
     fn broken(&self, args: BrokenArgs<'_>) {
         broken_chest_impl(&args);
     }
@@ -461,6 +522,13 @@ impl BlockBehaviour for TrappedChestBlock {
         get_chest_screen_handler_factory(args)
     }
 
+    fn get_state_for_neighbor_update(
+        &self,
+        args: GetStateForNeighborUpdateArgs<'_>,
+    ) -> BlockStateId {
+        chest_state_for_neighbor_update(&args)
+    }
+
     fn broken(&self, args: BrokenArgs<'_>) {
         broken_chest_impl(&args);
     }
@@ -523,7 +591,7 @@ fn compute_chest_props(
         let (clicked_block, clicked_block_state) =
             world.get_block_and_state_id(&block_pos.offset(face.to_offset()));
 
-        if clicked_block == block {
+        if chest_can_connect_to(block, clicked_block) {
             let clicked_props = ChestLikeProperties::from_state_id(clicked_block_state);
 
             if clicked_props.r#type != ChestType::Single {
@@ -567,6 +635,84 @@ fn compute_chest_props(
     }
 }
 
+/// Whether `neighbor` may form a double chest with a chest of kind `block`. Copper chests connect
+/// across weathering stages and waxing, every other chest only with its own block.
+fn chest_can_connect_to(block: &Block, neighbor: &Block) -> bool {
+    neighbor == block || (is_copper_chest(block) && is_copper_chest(neighbor))
+}
+
+fn is_copper_chest(block: &Block) -> bool {
+    block.has_tag(&pumpkin_data::tag::Block::MINECRAFT_COPPER_CHESTS)
+}
+
+const WAXED_COPPER_CHESTS: [(&Block, &Block); 4] = [
+    (&Block::WAXED_COPPER_CHEST, &Block::COPPER_CHEST),
+    (
+        &Block::WAXED_EXPOSED_COPPER_CHEST,
+        &Block::EXPOSED_COPPER_CHEST,
+    ),
+    (
+        &Block::WAXED_WEATHERED_COPPER_CHEST,
+        &Block::WEATHERED_COPPER_CHEST,
+    ),
+    (
+        &Block::WAXED_OXIDIZED_COPPER_CHEST,
+        &Block::OXIDIZED_COPPER_CHEST,
+    ),
+];
+
+/// The unwaxed counterpart of a waxed copper chest, or the block itself otherwise.
+fn unwaxed_copper_chest(block: &'static Block) -> &'static Block {
+    WAXED_COPPER_CHESTS
+        .iter()
+        .find(|(waxed, _)| *waxed == block)
+        .map_or(block, |(_, unwaxed)| unwaxed)
+}
+
+/// Weathering stage of a copper chest, waxed or not.
+fn copper_chest_weather_state(block: &Block) -> Option<WeatherState> {
+    get_weather_state(block).or_else(|| {
+        WAXED_COPPER_CHESTS
+            .iter()
+            .find(|(waxed, _)| *waxed == block)
+            .and_then(|(_, unwaxed)| get_weather_state(unwaxed))
+    })
+}
+
+/// When a copper chest is placed as one half of a double chest, both halves adopt the least
+/// oxidized block of the pair. If only one half is waxed, the wax is dropped.
+fn least_oxidized_connected_block(
+    world: &World,
+    block: &'static Block,
+    pos: &BlockPos,
+    props: ChestLikeProperties,
+) -> &'static Block {
+    let connected_dir = match props.r#type {
+        ChestType::Single => return block,
+        ChestType::Left => props.facing.rotate_clockwise(),
+        ChestType::Right => props.facing.rotate_counter_clockwise(),
+    };
+    let connected = world.get_block(&pos.offset(connected_dir.to_offset()));
+    let (Some(own_state), Some(connected_state)) = (
+        copper_chest_weather_state(block),
+        copper_chest_weather_state(connected),
+    ) else {
+        return block;
+    };
+
+    let is_waxed = |b: &Block| get_weather_state(b).is_none();
+    let (own, other) = if is_waxed(block) == is_waxed(connected) {
+        (block, connected)
+    } else {
+        (unwaxed_copper_chest(block), unwaxed_copper_chest(connected))
+    };
+    if own_state <= connected_state {
+        own
+    } else {
+        other
+    }
+}
+
 fn get_chest_properties_if_can_connect(
     world: &World,
     block: &Block,
@@ -574,30 +720,65 @@ fn get_chest_properties_if_can_connect(
     facing: HorizontalFacing,
     direction: HorizontalFacing,
     wanted_type: ChestType,
-) -> Option<ChestLikeProperties> {
+) -> Option<(&'static Block, ChestLikeProperties)> {
     let (neighbor_block, neighbor_block_state) =
         world.get_block_and_state_id(&block_pos.offset(direction.to_offset()));
 
-    if neighbor_block != block {
+    if !chest_can_connect_to(block, neighbor_block) {
         return None;
     }
 
     let neighbor_props = ChestLikeProperties::from_state_id(neighbor_block_state);
     if neighbor_props.facing == facing && neighbor_props.r#type == wanted_type {
-        return Some(neighbor_props);
+        return Some((neighbor_block, neighbor_props));
     }
 
     None
 }
 
+/// A chest cannot be opened while a redstone-conductive block or a sitting cat is on top of it.
 fn is_chest_blocked(world: &World, block_pos: &BlockPos) -> bool {
-    // TODO: Block opening when a cat is sitting on top.
-    has_block_on_top(world, block_pos)
+    has_block_on_top(world, block_pos) || is_cat_sitting_on_chest(world, block_pos)
 }
+
 fn has_block_on_top(world: &World, block_pos: &BlockPos) -> bool {
     let above_pos = block_pos.up();
     let above_state = world.get_block_state(&above_pos);
     above_state.is_solid_block()
+}
+
+fn is_cat_sitting_on_chest(world: &World, block_pos: &BlockPos) -> bool {
+    let x = f64::from(block_pos.0.x);
+    let y = f64::from(block_pos.0.y);
+    let z = f64::from(block_pos.0.z);
+    let area = BoundingBox::new(
+        Vector3::new(x, y + 1.0, z),
+        Vector3::new(x + 1.0, y + 2.0, z + 1.0),
+    );
+    world.get_entities_at_box(&area).iter().any(|entity| {
+        entity
+            .cast_any()
+            .downcast_ref::<CatEntity>()
+            .is_some_and(TamableAnimal::is_in_sitting_pose)
+    })
+}
+
+/// Sound a chest hinge makes. Copper chests use the sounds of their weathering stage.
+#[must_use]
+pub fn chest_hinge_sound(state_id: BlockStateId, open: bool) -> Sound {
+    match (
+        copper_chest_weather_state(Block::from_state_id(state_id)),
+        open,
+    ) {
+        (None, true) => Sound::BlockChestOpen,
+        (None, false) => Sound::BlockChestClose,
+        (Some(WeatherState::Weathered), true) => Sound::BlockCopperChestWeatheredOpen,
+        (Some(WeatherState::Weathered), false) => Sound::BlockCopperChestWeatheredClose,
+        (Some(WeatherState::Oxidized), true) => Sound::BlockCopperChestOxidizedOpen,
+        (Some(WeatherState::Oxidized), false) => Sound::BlockCopperChestOxidizedClose,
+        (Some(_), true) => Sound::BlockCopperChestOpen,
+        (Some(_), false) => Sound::BlockCopperChestClose,
+    }
 }
 
 trait ChestTypeExt {
