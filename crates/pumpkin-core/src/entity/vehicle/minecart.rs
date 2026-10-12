@@ -75,7 +75,7 @@ impl MinecartEntity {
     fn redstone_direction(
         world: &crate::world::World,
         pos: &BlockPos,
-        props: &PoweredRailLikeProperties,
+        props: PoweredRailLikeProperties,
     ) -> Vector3<f64> {
         use pumpkin_data::block_properties::RailShapeStraight;
         let conductor = |p: BlockPos| world.get_block_state(&p).is_solid_block();
@@ -242,7 +242,7 @@ impl EntityBase for MinecartEntity {
                         self.vehicle.entity.velocity.store(velocity);
                     } else {
                         // A resting cart is pushed away from a solid block at the end of the rail.
-                        let dir = Self::redstone_direction(&world, &block_pos, &props);
+                        let dir = Self::redstone_direction(&world, &block_pos, props);
                         if dir.length_squared() > 0.0 {
                             self.vehicle
                                 .entity
