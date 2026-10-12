@@ -72,6 +72,35 @@ enum MinecartKind {
 }
 
 impl MinecartEntity {
+    fn redstone_direction(
+        world: &crate::world::World,
+        pos: &BlockPos,
+        props: &PoweredRailLikeProperties,
+    ) -> Vector3<f64> {
+        use pumpkin_data::block_properties::RailShapeStraight;
+        let conductor = |p: BlockPos| world.get_block_state(&p).is_solid_block();
+        match props.shape {
+            RailShapeStraight::EastWest => {
+                if conductor(pos.west()) {
+                    return Vector3::new(1.0, 0.0, 0.0);
+                }
+                if conductor(pos.east()) {
+                    return Vector3::new(-1.0, 0.0, 0.0);
+                }
+            }
+            RailShapeStraight::NorthSouth => {
+                if conductor(pos.north()) {
+                    return Vector3::new(0.0, 0.0, 1.0);
+                }
+                if conductor(pos.south()) {
+                    return Vector3::new(0.0, 0.0, -1.0);
+                }
+            }
+            _ => {}
+        }
+        Vector3::new(0.0, 0.0, 0.0)
+    }
+
     pub fn new(entity: Entity) -> Self {
         let kind = match entity.entity_type.id {
             id if id == EntityType::MINECART.id => MinecartKind::Rideable(RideableMinecart),
@@ -212,16 +241,14 @@ impl EntityBase for MinecartEntity {
                             .multiply(new_speed, new_speed, new_speed);
                         self.vehicle.entity.velocity.store(velocity);
                     } else {
-                        let yaw = self.vehicle.entity.yaw.load();
-                        let push_dir = Vector3::new(
-                            -f64::from((yaw.to_radians()).sin()),
-                            0.0,
-                            f64::from((yaw.to_radians()).cos()),
-                        );
-                        self.vehicle
-                            .entity
-                            .velocity
-                            .store(push_dir.multiply(0.1, 0.1, 0.1));
+                        // A resting cart is pushed away from a solid block at the end of the rail.
+                        let dir = Self::redstone_direction(&world, &block_pos, &props);
+                        if dir.length_squared() > 0.0 {
+                            self.vehicle
+                                .entity
+                                .velocity
+                                .store(dir.multiply(0.2, 0.2, 0.2));
+                        }
                     }
                     self.vehicle.entity.send_velocity();
                 } else if is_activator_rail {
