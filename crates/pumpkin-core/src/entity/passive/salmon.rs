@@ -5,7 +5,6 @@ use pumpkin_data::sound::Sound;
 use pumpkin_data::tracked_data;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::var_int::VarInt;
-use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
 
@@ -120,19 +119,7 @@ impl SalmonEntity {
 
     /// Vanilla `Salmon.getDefaultDimensions`: the type's box scaled by the variant.
     fn apply_dimensions(&self) {
-        let entity = self.get_entity();
-        let base = Entity::type_dimensions(entity.entity_type);
-        let scale = self.get_variant().bounding_box_scale();
-        let dimension = pumpkin_util::math::boundingbox::EntityDimensions::new(
-            base.width * scale,
-            base.height * scale,
-            base.eye_height * scale,
-        );
-        let pos = entity.pos.load();
-        entity.entity_dimension.store(dimension);
-        entity
-            .bounding_box
-            .store(BoundingBox::new_from_pos(pos.x, pos.y, pos.z, &dimension));
+        fish::apply_scaled_dimensions(self.get_entity(), self.get_variant().bounding_box_scale());
     }
 }
 

@@ -1,17 +1,17 @@
 //! Shared behaviour of the vanilla fish mobs (`AbstractFish` and `AbstractSchoolingFish`).
 //!
-//! Cod and Salmon are the only users right now, but Pufferfish and Tropical Fish can register
-//! through [`register_fish`] too once they are ported past the ground navigator.
+//! Cod, Salmon, Pufferfish and Tropical Fish register through [`register_fish`]; the schooling
+//! fish additionally use [`register_schooling_goals`] and [`AbstractSchoolingFish`].
 
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::sound::Sound;
+use pumpkin_util::math::boundingbox::{BoundingBox, EntityDimensions};
 use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
 
-use crate::entity::EntityBase;
 use crate::entity::ai::control::fish_move_control::FishMoveControl;
 use crate::entity::ai::goal::avoid_entity::{AvoidEntityGoal, AvoidSelector};
 use crate::entity::ai::goal::escape_danger::EscapeDangerGoal;
@@ -21,6 +21,7 @@ use crate::entity::ai::pathfinder::Navigator;
 use crate::entity::ai::pathfinder::NavigatorGoal;
 use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::mob::{Mob, MobEntity};
+use crate::entity::{Entity, EntityBase};
 
 /// Vanilla `AbstractFish.registerGoals`: `new PanicGoal(this, 1.25)`.
 const PANIC_SPEED: f64 = 1.25;
@@ -209,6 +210,22 @@ pub fn register_schooling_goals(mob_entity: &MobEntity, mob_weak: &Weak<dyn Enti
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .add_goal(5, Box::new(FollowFlockLeaderGoal::new(mob_weak.clone())));
+}
+
+/// Vanilla `getDefaultDimensions(pose).scale(scale)`: rebuild the type's box at a new scale
+/// without moving the entity.
+pub fn apply_scaled_dimensions(entity: &Entity, scale: f32) {
+    let base = Entity::type_dimensions(entity.entity_type);
+    let dimension = EntityDimensions::new(
+        base.width * scale,
+        base.height * scale,
+        base.eye_height * scale,
+    );
+    let pos = entity.pos.load();
+    entity.entity_dimension.store(dimension);
+    entity
+        .bounding_box
+        .store(BoundingBox::new_from_pos(pos.x, pos.y, pos.z, &dimension));
 }
 
 /// Vanilla `AbstractFish.aiStep`: flop on land, and `AbstractSchoolingFish.tick`.
