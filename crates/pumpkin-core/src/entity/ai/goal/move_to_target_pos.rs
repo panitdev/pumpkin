@@ -111,11 +111,6 @@ impl<M: MoveToTargetPos> MoveToTargetPosGoal<M> {
     }
 
     #[must_use]
-    pub const fn should_reset_path(&self) -> bool {
-        self.trying_time % 40 == 0
-    }
-
-    #[must_use]
     pub const fn is_reached_target(&self) -> bool {
         self.reached
     }
@@ -146,6 +141,16 @@ pub trait MoveToTargetPos: Send + Sync {
 
     fn get_desired_distance_to_target(&self) -> f64 {
         1.0
+    }
+
+    /// Vanilla `MoveToBlockGoal.getMoveToTarget`. Defaults to the block above the target.
+    fn get_move_to_target(&self, block_pos: BlockPos) -> BlockPos {
+        block_pos.up()
+    }
+
+    /// Vanilla `MoveToBlockGoal.shouldRecalculatePath`.
+    fn should_recalculate_path(&self, try_ticks: i32) -> bool {
+        try_ticks % 40 == 0
     }
 }
 
@@ -180,15 +185,15 @@ impl<M: MoveToTargetPos> Goal for MoveToTargetPosGoal<M> {
     }
 
     fn tick(&mut self, mob: &dyn Mob) {
-        let target = self.get_target_pos();
+        let Some(move_to_target_pos) = self.move_to_target_pos.get() else {
+            return;
+        };
+        let target = move_to_target_pos.get_move_to_target(self.target_pos);
         let target_center = Vector3::new(
             target.0.x as f64 + 0.5,
             target.0.y as f64 + 0.5,
             target.0.z as f64 + 0.5,
         );
-        let Some(move_to_target_pos) = self.move_to_target_pos.get() else {
-            return;
-        };
         let desired_distance = move_to_target_pos.get_desired_distance_to_target();
 
         if target_center.squared_distance_to_vec(&mob.get_entity().pos.load())
@@ -199,7 +204,7 @@ impl<M: MoveToTargetPos> Goal for MoveToTargetPosGoal<M> {
         } else {
             self.reached = false;
             self.trying_time += 1;
-            if self.should_reset_path() {
+            if move_to_target_pos.should_recalculate_path(self.trying_time) {
                 let mut navigator = mob
                     .get_mob_entity()
                     .navigator

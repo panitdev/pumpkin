@@ -29,6 +29,16 @@ impl GoalSelector {
         }
     }
 
+    /// Whether a goal of type `G` is currently running. Mirrors vanilla
+    /// `Strider.isBeingTempted`/`isPanicking`, which query a stored goal instance.
+    #[must_use]
+    pub fn is_goal_running<G: Goal + 'static>(&self) -> bool {
+        let type_id = TypeId::of::<G>();
+        self.goals
+            .iter()
+            .any(|goal| goal.type_id == type_id && goal.running)
+    }
+
     pub fn remove_goals<G: Goal + 'static>(&mut self) -> Vec<PrioritizedGoal> {
         self.remove_goal_by_type_id(TypeId::of::<G>())
     }
