@@ -792,6 +792,9 @@ pub trait EntityBase: Send + Sync + std::any::Any {
     fn get_base_experience_reward(&self) -> u32 {
         0
     }
+
+    /// Vanilla `dropCustomDeathLoot`, called when a living entity dies.
+    fn drop_custom_death_loot(&self) {}
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]

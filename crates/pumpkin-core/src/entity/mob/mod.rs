@@ -921,6 +921,9 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn post_tick(&self) {}
 
+    /// Vanilla `dropCustomDeathLoot`: drops beyond the loot table and equipment.
+    fn drop_custom_death_loot(&self) {}
+
     fn get_preferred_weapon_type(&self) -> Option<&'static pumpkin_data::tag::Tag> {
         None
     }
@@ -1598,6 +1601,10 @@ impl<T: Mob + Send + 'static> EntityBase for T {
 
     fn get_base_experience_reward(&self) -> u32 {
         Mob::get_base_experience_reward(self)
+    }
+
+    fn drop_custom_death_loot(&self) {
+        Mob::drop_custom_death_loot(self);
     }
 }
 

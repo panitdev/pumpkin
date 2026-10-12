@@ -2104,6 +2104,7 @@ impl LivingEntity {
 
             // Drop loot
             self.drop_loot(&params);
+            dyn_self.drop_custom_death_loot();
 
             // A sculk catalyst in range soaks up the experience as spreading charge instead, and
             // blooms (consuming the drop) even when there is no experience to spread.

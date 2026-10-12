@@ -1,11 +1,14 @@
 use std::sync::{
     Arc, Weak,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
 use crate::entity::attributes::Modifier;
 use crate::entity::attributes::ModifierOperation;
-use pumpkin_data::{BlockStateId, attributes::Attributes};
+use pumpkin_data::{
+    Block, BlockState, BlockStateId, attributes::Attributes,
+    enchantment_provider::EnchantmentProvider, item_stack::ItemStack,
+};
 
 use crossbeam::atomic::AtomicCell;
 use pumpkin_data::{
@@ -42,8 +45,10 @@ use crate::entity::{
     },
     player::Player,
 };
+use crate::world::loot::{LootContextParameters, generate_loot_from_handle};
 
 const SPEED_BOOST: f64 = 0.15;
+const MIN_DEAGGRESSION_TIME: i32 = 600;
 const ENDERMAN_SPEED_BOOST_ID: &str = "minecraft:attacking";
 
 pub const ENDERMAN_EYE_HEIGHT: f64 = 2.55;
@@ -63,6 +68,7 @@ pub struct EndermanEntity {
     creepy: AtomicBool,
     provoked: AtomicBool,
     speed_boosted: AtomicBool,
+    target_change_time: AtomicI32,
 }
 
 impl EndermanEntity {
@@ -75,6 +81,7 @@ impl EndermanEntity {
             creepy: AtomicBool::new(false),
             provoked: AtomicBool::new(false),
             speed_boosted: AtomicBool::new(false),
+            target_change_time: AtomicI32::new(0),
         };
         let mob_arc = Arc::new(entity);
         let mob_weak: Weak<dyn Mob> = {
@@ -129,6 +136,9 @@ impl EndermanEntity {
 
     pub fn teleport_randomly(&self) -> bool {
         let entity = &self.mob_entity.living_entity.entity;
+        if !entity.is_alive() {
+            return false;
+        }
         let pos = entity.pos.load();
         let (x, y, z) = {
             let mut rng = self.get_random();
@@ -171,38 +181,30 @@ impl EndermanEntity {
         self.teleport_to(x, y, z)
     }
 
+    /// Vanilla `Enderman.teleport(x, y, z)`, which is `randomTeleport` plus the effects.
     pub fn teleport_to(&self, x: f64, y: f64, z: f64) -> bool {
         let entity = &self.mob_entity.living_entity.entity;
+        if entity.has_vehicle() {
+            return false;
+        }
         let origin = entity.pos.load();
         let world = entity.world.load();
 
-        let min_y = f64::from(world.dimension.min_y);
-        let max_y = f64::from(world.dimension.min_y + world.dimension.height - 1);
-        let mut target_y = y.clamp(min_y, max_y);
-
-        let block_x = x.floor() as i32;
-        let mut block_y = target_y.floor() as i32;
-        let block_z = z.floor() as i32;
-        let ground_pos = loop {
-            let below_pos = BlockPos::new(block_x, block_y - 1, block_z);
-            let below_state = world.get_block_state(&below_pos);
-            if below_state.is_solid() {
-                break Some(below_pos);
+        // `randomTeleport` walks down from the target until it meets a block that stops motion.
+        let mut target_y = y;
+        let mut pos = BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
+        let floor = loop {
+            if pos.0.y <= world.dimension.min_y {
+                return false;
             }
-            if block_y <= world.dimension.min_y {
-                break None;
+            pos.0.y -= 1;
+            let block = world.get_block(&pos);
+            if block.has_tag(&tag::Block::MINECRAFT_ENTITIES_CAN_TELEPORT_TO) {
+                break block;
             }
-            block_y -= 1;
-            target_y = block_y as f64;
+            target_y -= 1.0;
         };
-        let Some(ground_pos) = ground_pos else {
-            return false;
-        };
-
-        if world
-            .get_fluid(&ground_pos)
-            .has_tag(&tag::Fluid::MINECRAFT_WATER)
-        {
+        if floor.has_tag(&tag::Block::MINECRAFT_ENDERMAN_DOES_NOT_TELEPORT_TO) {
             return false;
         }
 
@@ -210,19 +212,33 @@ impl EndermanEntity {
         if !world.is_space_empty(bb) || world.contains_any_liquid(bb) {
             return false;
         }
+        for bx in bb.min.x.floor() as i32..=bb.max.x.floor() as i32 {
+            for by in bb.min.y.floor() as i32..=bb.max.y.floor() as i32 {
+                for bz in bb.min.z.floor() as i32..=bb.max.z.floor() as i32 {
+                    if world
+                        .get_block(&BlockPos::new(bx, by, bz))
+                        .has_tag(&tag::Block::MINECRAFT_ENDERMAN_DOES_NOT_TELEPORT_TO)
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        // canRandomlyTeleportTo: no water below the target block.
+        let below = BlockPos::new(
+            x.floor() as i32,
+            target_y.floor() as i32 - 1,
+            z.floor() as i32,
+        );
+        if world
+            .get_fluid(&below)
+            .has_tag(&tag::Fluid::MINECRAFT_WATER)
+        {
+            return false;
+        }
 
         let new_pos = Vector3::new(x, target_y, z);
-
-        for pos in &[origin, new_pos] {
-            world.spawn_particle(
-                *pos,
-                Vector3::new(0.0, 0.0, 0.0),
-                0.0,
-                128,
-                Particle::Portal,
-            );
-            world.play_sound(Sound::EntityEndermanTeleport, SoundCategory::Hostile, pos);
-        }
 
         if let Some(server) = world.server.upgrade() {
             let mut event =
@@ -235,6 +251,17 @@ impl EndermanEntity {
             if event.cancelled {
                 return false;
             }
+        }
+
+        for pos in &[origin, new_pos] {
+            world.spawn_particle(
+                *pos,
+                Vector3::new(0.0, 0.0, 0.0),
+                0.0,
+                128,
+                Particle::Portal,
+            );
+            world.play_sound(Sound::EntityEndermanTeleport, SoundCategory::Hostile, pos);
         }
 
         entity.teleport(new_pos, None, None, &world);
@@ -259,6 +286,14 @@ impl EndermanEntity {
         drop(mob_target);
 
         if is_some {
+            self.target_change_time.store(
+                self.mob_entity
+                    .living_entity
+                    .entity
+                    .age
+                    .load(Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
             self.set_creepy(true);
             // Use attribute modifier instead of direct speed arithmetic
             if !self.speed_boosted.swap(true, Ordering::Relaxed) {
@@ -279,6 +314,7 @@ impl EndermanEntity {
                 );
             }
         } else {
+            self.target_change_time.store(0, Ordering::Relaxed);
             self.set_creepy(false);
             self.set_provoked(false);
             if self.speed_boosted.swap(false, Ordering::Relaxed) {
@@ -419,7 +455,7 @@ impl Mob for EndermanEntity {
         self.set_target(self.as_valid_target(target));
     }
 
-    // TODO: sunlight avoidance, carried block drop on death, angerable system, ambient sound override
+    // TODO: ambient sound override
     fn mob_tick(&self, caller: &dyn EntityBase) {
         let entity = &self.mob_entity.living_entity.entity;
         if !entity.is_alive() {
@@ -431,6 +467,58 @@ impl Mob for EndermanEntity {
         let raining_at_head = world.is_raining_at(&entity.bounding_box.load().max_block_pos());
         if entity.touching_water.load(Ordering::SeqCst) || raining_at_feet || raining_at_head {
             caller.damage(caller, 1.0, DamageType::DROWN);
+        }
+    }
+
+    fn drop_custom_death_loot(&self) {
+        let Some(state_id) = self.carried_block.load() else {
+            return;
+        };
+        let entity = &self.mob_entity.living_entity.entity;
+        let world = entity.world.load_full();
+        if !world.level_info.load().game_rules.mob_drops {
+            return;
+        }
+
+        let mut tool = ItemStack::new(1, &Item::DIAMOND_AXE);
+        EnchantmentProvider::ENDERMAN_LOOT_DROP.apply_to_stack(&mut tool, 0.0);
+        let state = BlockState::from_id(state_id);
+        let params = LootContextParameters {
+            block_state: Some(state),
+            position: Some(entity.pos.load()),
+            this_entity: Some(entity.entity_type),
+            tool: Some(tool),
+            ..Default::default()
+        };
+        let key = format!("minecraft:blocks/{}", Block::from_state_id(state.id).name);
+        if let Some(loot_table) = world.get_loot_table(&key) {
+            let pos = entity.block_pos.load();
+            for stack in generate_loot_from_handle(&loot_table, rand::random(), &params) {
+                world.drop_stack(&pos, stack);
+            }
+        }
+    }
+
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        let entity = &self.mob_entity.living_entity.entity;
+        if !entity.is_alive() {
+            return;
+        }
+        let world = entity.world.load();
+        // customServerAiStep: leave the fight and teleport away in bright daylight.
+        if world.is_bright_outside()
+            && entity.age.load(Ordering::Relaxed)
+                >= self.target_change_time.load(Ordering::Relaxed) + MIN_DEAGGRESSION_TIME
+        {
+            let brightness =
+                world.get_light_level_dependent_magic_value(&entity.get_eye_pos().to_block_pos());
+            if brightness > 0.5
+                && world.can_see_sky(&entity.block_pos.load())
+                && self.get_random().random::<f32>() * 30.0 < (brightness - 0.4) * 2.0
+            {
+                self.set_target(None);
+                self.teleport_randomly();
+            }
         }
     }
 
