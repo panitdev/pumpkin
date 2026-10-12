@@ -1,5 +1,11 @@
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
+
+use crate::world::World;
+use pumpkin_data::FacingExt;
+use pumpkin_util::math::boundingbox::BoundingBox;
+use pumpkin_util::math::position::BlockPos;
 
 use crate::block::{
     GetComparatorOutputArgs, GetScreenHandlerFactoryArgs, OnPlaceArgs, OnSyncedBlockEventArgs,
@@ -59,7 +65,6 @@ impl BlockBehaviour for ShulkerBoxBlock {
 
     fn on_synced_block_event(&self, args: OnSyncedBlockEventArgs<'_>) -> bool {
         // On the server, we don't need the Animation steps for now, because the client is responsible for that.
-        // TODO: Do not open the shulker box when it is currently closing
         args.r#type == Self::OPEN_ANIMATION_EVENT_TYPE
     }
 
@@ -71,6 +76,9 @@ impl BlockBehaviour for ShulkerBoxBlock {
     }
 
     fn normal_use(&self, args: NormalUseArgs<'_>) -> BlockActionResult {
+        if !Self::can_open(args.world, args.position) {
+            return BlockActionResult::Success;
+        }
         if let Some(factory) = self.get_screen_handler_factory(GetScreenHandlerFactoryArgs {
             server: args.server,
             world: args.world,
@@ -106,4 +114,57 @@ impl BlockBehaviour for ShulkerBoxBlock {
 
 impl ShulkerBoxBlock {
     pub const OPEN_ANIMATION_EVENT_TYPE: u8 = 1;
+    /// Vanilla deflates the lid bounding box by this much.
+    const LID_EPSILON: f64 = 1.0E-6;
+
+    /// A closed box only opens if the half block in front of its lid is free of collisions.
+    /// The server does not track the lid animation, so "closed" means nobody is viewing it.
+    // TODO: ShulkerBoxBlockEntity.getAnimationStatus (a still-closing lid counts as open).
+    fn can_open(world: &Arc<World>, position: &BlockPos) -> bool {
+        if let Some(block_entity) = world.get_block_entity(position)
+            && let Some(shulker) = block_entity
+                .as_any()
+                .downcast_ref::<ShulkerBoxBlockEntity>()
+            && shulker.viewers.current.load(Ordering::Relaxed) > 0
+        {
+            return true;
+        }
+        let state = world.get_block_state(position);
+        let facing = EndRodLikeProperties::from_state_id(state.id).facing;
+        let offset = facing.to_block_direction().to_offset();
+        let min = position.0.to_f64();
+        let mut lid = BoundingBox::new(min, min.add_raw(1.0, 1.0, 1.0));
+        let offsets = [
+            f64::from(offset.x),
+            f64::from(offset.y),
+            f64::from(offset.z),
+        ];
+        // Slab of half a block thickness on the lid side, deflated by a hair like vanilla.
+        for (axis, o) in offsets.into_iter().enumerate() {
+            let (lo, hi) = if o > 0.0 {
+                (1.0, 1.5)
+            } else if o < 0.0 {
+                (-0.5, 0.0)
+            } else {
+                (0.0, 1.0)
+            };
+            let base = [min.x, min.y, min.z][axis];
+            let (lo, hi) = (base + lo + Self::LID_EPSILON, base + hi - Self::LID_EPSILON);
+            match axis {
+                0 => {
+                    lid.min.x = lo;
+                    lid.max.x = hi;
+                }
+                1 => {
+                    lid.min.y = lo;
+                    lid.max.y = hi;
+                }
+                _ => {
+                    lid.min.z = lo;
+                    lid.max.z = hi;
+                }
+            }
+        }
+        world.is_space_empty(lid)
+    }
 }
