@@ -13,6 +13,7 @@ use crate::entity::EntityBase;
 use crate::entity::ai::random_pos::land_random_pos;
 use crate::entity::item::ItemEntity;
 use crate::entity::living::LivingEntity;
+use crate::entity::mob::Mob;
 use crate::entity::mob::piglin::{PiglinActivity, PiglinEntity};
 use crate::entity::player::Player;
 
@@ -376,5 +377,32 @@ impl PiglinAi {
             Self::RANDOM_THROW_POS_RANGE_VERTICAL,
         )
         .unwrap_or_else(|| piglin.mob_entity.living_entity.entity.pos.load())
+    }
+
+    /// Vanilla `PiglinAi.angerNearbyPiglins`: idle piglins within
+    /// [`PiglinAi::PLAYER_ANGER_RANGE`] that can see `player` turn on it.
+    pub fn anger_nearby_piglins(
+        world: &Arc<crate::world::World>,
+        player: &Arc<Player>,
+        only_if_they_see_the_player: bool,
+    ) {
+        let player_entity = player.get_entity();
+        let pos = player_entity.pos.load();
+        for entity in world
+            .get_nearby_entities(pos, Self::PLAYER_ANGER_RANGE)
+            .into_values()
+        {
+            let Some(piglin) = entity.cast_any().downcast_ref::<PiglinEntity>() else {
+                continue;
+            };
+            if piglin.activity.load() != PiglinActivity::Idle {
+                continue;
+            }
+            if only_if_they_see_the_player && !piglin.get_entity().has_line_of_sight(player_entity)
+            {
+                continue;
+            }
+            piglin.set_mob_target(Some(player.clone() as Arc<dyn EntityBase>));
+        }
     }
 }
