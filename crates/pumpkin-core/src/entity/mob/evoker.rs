@@ -6,6 +6,7 @@ use uuid::Uuid;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::sound::Sound;
 use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 
 use crate::entity::{
@@ -21,6 +22,7 @@ use crate::entity::{
             ObtainRaidLeaderBannerGoal, PathfindToRaidGoal, Raider, RaiderCelebrationGoal,
             RaiderData, RaiderMoveThroughVillageGoal,
         },
+        vex::VexEntity,
     },
     projectile::evoker_fangs::EvokerFangsEntity,
     r#type::from_type,
@@ -472,18 +474,27 @@ impl Goal for EvokerSummonSpellGoal {
             evoker_ent.play_sound(Sound::EntityEvokerCastSpell);
 
             let world = evoker_ent.world.load();
-            let evoker_pos = evoker_ent.pos.load();
+            let evoker_block = evoker_ent.block_pos.load();
+            let evoker_uuid = evoker_ent.entity_uuid;
 
             for _ in 0..3 {
-                let offset_x = (rand::random::<i32>() % 5 - 2) as f64;
-                let offset_z = (rand::random::<i32>() % 5 - 2) as f64;
+                let bound_origin = BlockPos::new(
+                    evoker_block.0.x + rand::random_range(0..5) - 2,
+                    evoker_block.0.y + 1,
+                    evoker_block.0.z + rand::random_range(0..5) - 2,
+                );
                 let spawn_pos = Vector3::new(
-                    evoker_pos.x + offset_x,
-                    evoker_pos.y + 1.0,
-                    evoker_pos.z + offset_z,
+                    f64::from(bound_origin.0.x) + 0.5,
+                    f64::from(bound_origin.0.y),
+                    f64::from(bound_origin.0.z) + 0.5,
                 );
 
                 let vex = from_type(&EntityType::VEX, spawn_pos, &world, Uuid::new_v4());
+                if let Some(vex_entity) = vex.cast_any().downcast_ref::<VexEntity>() {
+                    vex_entity.set_owner(Some(evoker_uuid));
+                    vex_entity.set_bound_origin(Some(bound_origin));
+                    vex_entity.set_limited_life(20 * (30 + rand::random_range(0..90)));
+                }
                 world.spawn_entity(vex);
             }
         }

@@ -152,6 +152,9 @@ pub struct WeaponEntry {
 pub enum WeaponConfig {
     /// Always give this exact item (e.g. skeleton → bow).
     Always(&'static Item),
+    /// Always give this exact item with a zero drop chance (Vex). Vanilla
+    /// `Vex.populateDefaultEquipmentSlots` sets a 0 drop chance on the iron sword.
+    AlwaysNoDrop(&'static Item),
     /// Always give one of the weighted items (e.g. piglin weapons).
     AlwaysWeighted(&'static [WeaponEntry]),
     /// Give a weighted weapon with a difficulty-dependent chance.
@@ -450,6 +453,19 @@ pub static EQUIPMENT_REGISTRY: LazyLock<HashMap<&'static str, MobEquipmentDef>> 
             },
         );
 
+        // ─── Vex ───
+        // Vanilla `Vex.populateDefaultEquipmentSlots`: iron sword in the main hand, never dropped.
+        m.insert(
+            "vex",
+            MobEquipmentDef {
+                entity_type: "vex",
+                weapon: WeaponConfig::AlwaysNoDrop(&Item::IRON_SWORD),
+                armor: ArmorConfig::None,
+                enchanted: false,
+                can_pick_up_loot: false,
+            },
+        );
+
         m
     });
 
@@ -736,6 +752,9 @@ fn equip_mob_from_def(
                 stack,
                 DEFAULT_EQUIPMENT_DROP_CHANCE,
             ));
+        }
+        WeaponConfig::AlwaysNoDrop(item) => {
+            changes.push((EquipmentSlot::MAIN_HAND, create_equipment_item(item), 0.0));
         }
         WeaponConfig::Chance {
             on_hard,

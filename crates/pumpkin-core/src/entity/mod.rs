@@ -228,6 +228,12 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         true
     }
 
+    /// Vanilla `Entity.isAffectedByBlocks`. Vex overrides this to keep block effects while its
+    /// tick sets `no_physics` to skip collisions.
+    fn is_affected_by_blocks(&self) -> bool {
+        self.get_entity().is_affected_by_blocks()
+    }
+
     /// Whether the entity is immune from explosion knockback and damage
     fn is_immune_to_explosion(&self) -> bool {
         false
@@ -1629,7 +1635,7 @@ impl Entity {
     }
 
     pub fn tick_block_collisions(&self, caller: &dyn EntityBase) -> bool {
-        if !self.is_affected_by_blocks() {
+        if !caller.is_affected_by_blocks() {
             return false;
         }
 
@@ -1662,8 +1668,12 @@ impl Entity {
 
             // TODO: this is default predicate, vanilla overwrites it for some blocks,
             // see .suffocates(...) in Blocks.java
-            let check_suffocation =
-                !suffocating && blocks_movement(state, block.id) && state.is_full_cube();
+            // Vanilla `Entity.isInWall` checks `noPhysics` itself, so a mob that only keeps block
+            // effects while flying (Vex) still does not suffocate.
+            let check_suffocation = !self.no_physics.load(Ordering::Relaxed)
+                && !suffocating
+                && blocks_movement(state, block.id)
+                && state.is_full_cube();
 
             World::check_collision(
                 &bounding_box,

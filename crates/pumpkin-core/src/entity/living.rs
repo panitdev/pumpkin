@@ -3442,7 +3442,7 @@ impl EntityBase for LivingEntity {
         );
 
         // Notify the block under the entity each tick if a supporting block position is found
-        if self.entity.is_affected_by_blocks()
+        if caller.is_affected_by_blocks()
             && let Some(supporting) = supporting_pos
         {
             let world = self.entity.world.load_full();

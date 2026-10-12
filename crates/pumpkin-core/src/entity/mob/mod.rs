@@ -977,6 +977,11 @@ pub trait Mob: EntityBase + Send + Sync {
         self.get_mob_entity().living_entity.get_gravity()
     }
 
+    /// Vanilla `Entity.isAffectedByBlocks`, overridable per mob.
+    fn mob_is_affected_by_blocks(&self) -> bool {
+        self.get_entity().is_affected_by_blocks()
+    }
+
     fn get_mob_y_velocity_drag(&self) -> Option<f64> {
         None
     }
@@ -1359,6 +1364,10 @@ impl<T: Mob + Send + 'static> EntityBase for T {
 
     fn is_pushed_by_fluids(&self) -> bool {
         Mob::is_pushed_by_fluids(self)
+    }
+
+    fn is_affected_by_blocks(&self) -> bool {
+        self.mob_is_affected_by_blocks()
     }
 
     fn on_lightning_strike(
