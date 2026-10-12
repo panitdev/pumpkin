@@ -95,6 +95,8 @@ pub struct ArmorStandEntity {
 impl ArmorStandEntity {
     pub fn new(entity: Entity) -> Self {
         let living_entity = LivingEntity::new(entity);
+        // Vanilla `ArmorStand.attackable`: mob AI never targets an armor stand.
+        living_entity.attackable.store(false, Ordering::Relaxed);
         let packed_rotation = PackedRotation::default();
 
         Self {

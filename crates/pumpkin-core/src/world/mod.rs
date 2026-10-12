@@ -7292,6 +7292,16 @@ impl World {
         }
     }
 
+    /// Vanilla `ServerLevel.isRaided`: an active raid covers this position.
+    #[must_use]
+    pub fn is_raided(&self, pos: &BlockPos) -> bool {
+        self.raids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_raid_at(pos)
+            .is_some()
+    }
+
     pub fn trigger_raid(&self, pos: BlockPos) {
         let mut raid_event =
             crate::plugin::api::events::raid::raid_trigger::RaidTriggerEvent::new(pos);

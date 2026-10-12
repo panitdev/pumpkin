@@ -34,6 +34,7 @@ impl ItemBehaviour for NameTagItem {
             mob.get_mob_entity()
                 .persistence_required
                 .store(true, Ordering::Relaxed);
+            mob.on_custom_name_set(&name.name);
         }
         item.decrement_unless_creative(player.gamemode.load(), 1);
     }

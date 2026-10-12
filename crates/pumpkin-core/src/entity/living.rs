@@ -108,6 +108,10 @@ pub struct LivingEntity {
     /// Set by a mob that climbs on its own, like the spider's `onClimbable`.
     pub climbs_walls: AtomicBool,
 
+    /// Vanilla `LivingEntity.attackable`: whether AI target goals may pick this entity. Only
+    /// armor stands override it to `false`.
+    pub attackable: AtomicBool,
+
     /// The position where the entity was last climbing, used for death messages
     pub climbing_pos: AtomicCell<Option<BlockPos>>,
 
@@ -306,6 +310,7 @@ impl LivingEntity {
             jumping_cooldown: AtomicU8::new(0),
             climbing: AtomicBool::new(false),
             climbs_walls: AtomicBool::new(false),
+            attackable: AtomicBool::new(true),
             climbing_pos: AtomicCell::new(None),
             last_attacker_id: AtomicI32::new(0),
             last_attacked_time: AtomicI32::new(0),
@@ -2636,6 +2641,12 @@ impl LivingEntity {
 
     pub fn can_take_damage(&self) -> bool {
         !self.entity.invulnerable.load(Ordering::Relaxed) && self.is_part_of_game()
+    }
+
+    /// Vanilla `LivingEntity.attackable`.
+    #[must_use]
+    pub fn is_attackable(&self) -> bool {
+        self.attackable.load(Ordering::Relaxed)
     }
 
     pub fn is_part_of_game(&self) -> bool {
