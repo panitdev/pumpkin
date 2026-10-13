@@ -6,7 +6,7 @@ use crate::{
     item::{ItemBehaviour, ItemMetadata},
 };
 use pumpkin_data::{
-    Block, BlockDirection,
+    Block, BlockDirection, BlockStateId,
     block_properties::CampfireLikeProperties,
     entity::EntityType,
     fluid::Fluid,
@@ -239,6 +239,35 @@ fn try_place_powder_snow(world: &Arc<World>, pos: BlockPos, direction: BlockDire
     true
 }
 
+/// Waterlogs a block that isn't waterlogged yet, like vanilla `LiquidBlockContainer.placeLiquid`.
+fn place_water_into(
+    world: &Arc<World>,
+    block: &Block,
+    state_id: BlockStateId,
+    pos: BlockPos,
+) -> bool {
+    if !block.is_waterloggable() || block.is_waterlogged(state_id) {
+        return false;
+    }
+    let mut state_id = block.set_waterlogged(state_id, true).unwrap_or(state_id);
+    if block.has_tag(&tag::Block::MINECRAFT_CAMPFIRES) {
+        // `CampfireBlock.placeLiquid`: water puts out a lit campfire.
+        let mut props = CampfireLikeProperties::from_state_id(state_id);
+        if props.lit {
+            world.play_sound(
+                Sound::EntityGenericExtinguishFire,
+                SoundCategory::Blocks,
+                &pos.to_centered_f64(),
+            );
+            props.lit = false;
+            state_id = props.to_state_id(block);
+        }
+    }
+    world.set_block_state(&pos, state_id, BlockFlags::NOTIFY_ALL);
+    world.schedule_fluid_tick(&Fluid::WATER, pos, 5, TickPriority::Normal);
+    true
+}
+
 pub(crate) fn try_place_filled_bucket(
     world: &Arc<World>,
     item: &Item,
@@ -250,10 +279,8 @@ pub(crate) fn try_place_filled_bucket(
         return try_place_powder_snow(world, pos, direction);
     }
 
-    if item.id == Item::WATER_BUCKET.id && block.is_waterlogged(state.id) {
-        let state_id = block.set_waterlogged(state.id, true).unwrap_or(state.id);
-        world.set_block_state(&pos, state_id, BlockFlags::NOTIFY_ALL);
-        world.schedule_fluid_tick(&Fluid::WATER, pos, 5, TickPriority::Normal);
+    // Vanilla `BucketItem.use` tries the clicked block first when it can hold water.
+    if item.id != Item::LAVA_BUCKET.id && place_water_into(world, block, state.id, pos) {
         return true;
     }
 
@@ -264,15 +291,7 @@ pub(crate) fn try_place_filled_bucket(
         if item.id == Item::LAVA_BUCKET.id {
             return false;
         }
-        let mut state_id = block.set_waterlogged(state.id, true).unwrap_or(state.id);
-        if block.has_tag(&tag::Block::MINECRAFT_CAMPFIRES) {
-            // Water puts out a lit campfire.
-            let mut props = CampfireLikeProperties::from_state_id(state_id);
-            props.lit = false;
-            state_id = props.to_state_id(block);
-        }
-        world.set_block_state(&target_pos, state_id, BlockFlags::NOTIFY_ALL);
-        world.schedule_fluid_tick(&Fluid::WATER, target_pos, 5, TickPriority::Normal);
+        place_water_into(world, block, state.id, target_pos);
         return true;
     }
 
