@@ -352,6 +352,8 @@ impl RuinedPortalPiece {
             }
 
             chunk.set_block_state(world_pos.x, world_pos.y, world_pos.z, state);
+            // Vanilla's shape update after template placement schedules this.
+            chunk.schedule_fluid_tick_for_state(world_pos.x, world_pos.y, world_pos.z, state);
 
             let final_block = Block::from_id(state.id.to_block_id());
             let block_entity_id =
@@ -409,7 +411,10 @@ impl RuinedPortalPiece {
         let z_span = bb.max.z - bb.min.z + 1;
         let average_width = i32::midpoint(x_span, z_span);
         let max_adj = (8 - average_width / 2).max(1);
-        let distance_adjustment = random.next_bounded_i32(max_adj);
+        // Every chunk under the spread rolls this, so it has to come out the same in each.
+        let distance_adjustment =
+            LegacyRand::from_seed(hash_block_pos(center_x, bb.min.y, center_z) as u64)
+                .next_bounded_i32(max_adj);
 
         let heightmap = self.vertical_placement.get_heightmap_type();
 
@@ -485,7 +490,9 @@ impl RuinedPortalPiece {
         for x in (bb.min.x + 1)..bb.max.x {
             for z in (bb.min.z + 1)..bb.max.z {
                 let pos = Vector3::new(x, bb.min.y, z);
-                if chunk.get_block_state(&pos).to_block_id() == Block::NETHERRACK.id {
+                if chunk_box.contains_pos(&pos)
+                    && chunk.get_block_state(&pos).to_block_id() == Block::NETHERRACK.id
+                {
                     self.add_netherrack_drip_column(
                         random,
                         chunk,
@@ -518,7 +525,12 @@ impl RuinedPortalPiece {
         }
     }
 
-    fn maybe_add_vines(random: &mut RandomGenerator, chunk: &mut ProtoChunk, pos: Vector3<i32>) {
+    fn maybe_add_vines(
+        random: &mut RandomGenerator,
+        chunk: &mut ProtoChunk,
+        pos: Vector3<i32>,
+        chunk_box: &BlockBox,
+    ) {
         let state = chunk.get_block_state(&pos);
         let block_id = state.to_block_id();
         if block_id != Block::AIR.id && block_id != Block::VINE.id {
@@ -530,7 +542,9 @@ impl RuinedPortalPiece {
                 _ => (Vector3::new(1, 0, 0), "west"),
             };
             let neighbor_pos = pos + dir_offset;
-            if chunk.get_block_state(&neighbor_pos).to_block_id() == Block::AIR.id {
+            if chunk_box.contains_pos(&neighbor_pos)
+                && chunk.get_block_state(&neighbor_pos).to_block_id() == Block::AIR.id
+            {
                 let entry = PaletteEntry::with_properties(
                     "minecraft:vine".to_string(),
                     vec![(vine_face.to_string(), "true".to_string())],
@@ -583,6 +597,27 @@ impl StructurePieceBase for RuinedPortalPiece {
     fn get_structure_piece_mut(&mut self) -> &mut StructurePiece {
         &mut self.piece
     }
+    /// Covers the netherrack spread around the portal as well. Vanilla places the whole portal
+    /// from the chunk holding its centre and writes the spread into the neighbouring chunks;
+    /// here each chunk places its own part, so every chunk under the spread has to see the piece.
+    fn bounding_box(&self) -> BlockBox {
+        let bb = self.piece.bounding_box;
+        let (center_x, center_z) = (
+            i32::midpoint(bb.min.x, bb.max.x),
+            i32::midpoint(bb.min.z, bb.max.z),
+        );
+        let reach = NETHERRACK_PROBABILITY_BY_DISTANCE.len() as i32 - 1;
+        let mut spread = BlockBox::new(
+            center_x - reach,
+            bb.min.y,
+            center_z - reach,
+            center_x + reach,
+            bb.max.y,
+            center_z + reach,
+        );
+        spread.encompass(&bb);
+        spread
+    }
     fn place(
         &mut self,
         chunk: &mut ProtoChunk,
@@ -591,35 +626,21 @@ impl StructurePieceBase for RuinedPortalPiece {
         _seed: i64,
         chunk_box: &BlockBox,
     ) {
-        let bounding_box = self
-            .template
-            .get_bounding_box(&self.place_settings, self.template_position);
-        let center = Vector3::new(
-            i32::midpoint(bounding_box.min.x, bounding_box.max.x),
-            i32::midpoint(bounding_box.min.y, bounding_box.max.y),
-            i32::midpoint(bounding_box.min.z, bounding_box.max.z),
-        );
+        self.place_blocks(chunk, chunk_box);
+        self.spread_netherrack(random, chunk, chunk_box);
+        self.add_netherrack_drip_columns_below_portal(random, chunk, chunk_box);
 
-        if chunk_box.contains_pos(&center) {
-            let mut enlarged_box = *chunk_box;
-            enlarged_box.encompass(&bounding_box);
-
-            self.place_blocks(chunk, &enlarged_box);
-            self.spread_netherrack(random, chunk, &enlarged_box);
-            self.add_netherrack_drip_columns_below_portal(random, chunk, &enlarged_box);
-
-            if self.properties.vines || self.properties.overgrown {
-                for x in self.piece.bounding_box.min.x..=self.piece.bounding_box.max.x {
-                    for y in self.piece.bounding_box.min.y..=self.piece.bounding_box.max.y {
-                        for z in self.piece.bounding_box.min.z..=self.piece.bounding_box.max.z {
-                            let pos = Vector3::new(x, y, z);
-                            if enlarged_box.contains_pos(&pos) {
-                                if self.properties.vines {
-                                    Self::maybe_add_vines(random, chunk, pos);
-                                }
-                                if self.properties.overgrown {
-                                    Self::maybe_add_leaves_above(random, chunk, pos);
-                                }
+        if self.properties.vines || self.properties.overgrown {
+            for x in self.piece.bounding_box.min.x..=self.piece.bounding_box.max.x {
+                for y in self.piece.bounding_box.min.y..=self.piece.bounding_box.max.y {
+                    for z in self.piece.bounding_box.min.z..=self.piece.bounding_box.max.z {
+                        let pos = Vector3::new(x, y, z);
+                        if chunk_box.contains_pos(&pos) {
+                            if self.properties.vines {
+                                Self::maybe_add_vines(random, chunk, pos, chunk_box);
+                            }
+                            if self.properties.overgrown {
+                                Self::maybe_add_leaves_above(random, chunk, pos);
                             }
                         }
                     }
@@ -731,4 +752,121 @@ fn make_settings(
     }
 
     settings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generation::get_world_gen;
+    use pumpkin_data::{BlockStateId, dimension::Dimension};
+    use pumpkin_util::{random::xoroshiro128::Xoroshiro, world_seed::Seed};
+
+    struct BlockRegistry;
+    impl WorldPortalExt for BlockRegistry {
+        fn can_place_at(
+            &self,
+            _block: &Block,
+            _state: &pumpkin_data::BlockState,
+            _block_accessor: &dyn crate::world::BlockAccessor,
+            _block_pos: &BlockPos,
+        ) -> bool {
+            true
+        }
+
+        fn mirror(
+            &self,
+            block: &Block,
+            state_id: BlockStateId,
+            mirror: Mirror,
+        ) -> &'static pumpkin_data::BlockState {
+            block.mirror(state_id, mirror)
+        }
+
+        fn rotate(
+            &self,
+            block: &Block,
+            state_id: BlockStateId,
+            rotation: Rotation,
+        ) -> &'static pumpkin_data::BlockState {
+            block.rotate(state_id, rotation)
+        }
+
+        fn spawn_mobs_for_chunk_generation(
+            &self,
+            _cache: &mut dyn crate::generation::proto_chunk::GenerationCache,
+            _biome: &'static pumpkin_data::chunk::Biome,
+            _chunk_x: i32,
+            _chunk_z: i32,
+        ) {
+        }
+    }
+
+    fn is_obsidian(id: pumpkin_data::BlockId) -> bool {
+        id == Block::OBSIDIAN.id || id == Block::CRYING_OBSIDIAN.id
+    }
+
+    #[test]
+    fn portal_on_chunk_border_is_split_between_chunks() {
+        let world_gen = get_world_gen(
+            Seed(0),
+            Dimension::THE_NETHER,
+            false,
+            Vec::new(),
+            String::new(),
+        );
+        let template = get_template("ruined_portal/portal_1").expect("portal_1 template");
+        let pivot = Vector3::new(template.size.x / 2, 0, template.size.z / 2);
+        let template_obsidian = template
+            .blocks
+            .iter()
+            .filter(|block| {
+                let name = &template.palette[block.state as usize].name;
+                name == "minecraft:obsidian" || name == "minecraft:crying_obsidian"
+            })
+            .count();
+
+        let (vertical_placement, properties) =
+            RuinedPortalProperties::for_variant(StructureKeys::RuinedPortalNether);
+        let mut piece = RuinedPortalPiece::new(
+            template,
+            "ruined_portal/portal_1".to_string(),
+            // portal_1 is a frame across z, so this puts it over the z = 0 chunk border.
+            Vector3::new(4, 64, -2),
+            vertical_placement,
+            properties,
+            Rotation::None,
+            Mirror::None,
+            pivot,
+        );
+
+        let mut placed_obsidian = 0;
+        for chunk_z in [-1, 0] {
+            let mut chunk = ProtoChunk::new(0, chunk_z, &world_gen);
+            let chunk_box = BlockBox::new(
+                0,
+                chunk.bottom_y() as i32,
+                chunk_z * 16,
+                15,
+                i32::MAX,
+                chunk_z * 16 + 15,
+            );
+            let mut random = RandomGenerator::Xoroshiro(Xoroshiro::from_seed(0));
+            piece.place(&mut chunk, &BlockRegistry, &mut random, 0, &chunk_box);
+
+            let mut in_chunk = 0;
+            for x in 0..16 {
+                for z in 0..16 {
+                    for y in 60..90 {
+                        let id = chunk.get_block_state_raw(x, y - chunk.bottom_y() as i32, z);
+                        if is_obsidian(id.to_block_id()) {
+                            in_chunk += 1;
+                        }
+                    }
+                }
+            }
+            assert!(in_chunk > 0, "chunk z {chunk_z} got none of the portal");
+            placed_obsidian += in_chunk;
+        }
+        assert_eq!(placed_obsidian, template_obsidian);
+    }
 }

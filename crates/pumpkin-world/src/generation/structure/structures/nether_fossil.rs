@@ -267,12 +267,8 @@ impl StructurePieceBase for NetherFossilPiece {
         seed: i64,
         chunk_box: &BlockBox,
     ) {
-        let fossil_bb = self.piece.bounding_box;
-        let mut enlarged_box = *chunk_box;
-        enlarged_box.encompass(&fossil_bb);
-
-        self.place_blocks(chunk, &enlarged_box);
-        Self::place_dried_ghast(chunk, seed, &fossil_bb, chunk_box);
+        self.place_blocks(chunk, chunk_box);
+        Self::place_dried_ghast(chunk, seed, &self.piece.bounding_box, chunk_box);
     }
 }
 

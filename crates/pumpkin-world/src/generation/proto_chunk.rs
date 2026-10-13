@@ -433,6 +433,19 @@ impl ProtoChunk {
         });
     }
 
+    /// Schedules a tick for the fluid `state` holds, if it holds one.
+    pub fn schedule_fluid_tick_for_state(&mut self, x: i32, y: i32, z: i32, state: &BlockState) {
+        let fluid = if state.is_waterlogged() {
+            &Fluid::WATER
+        } else {
+            match Fluid::from_state_id(state.id) {
+                Some(fluid) if fluid.id != Fluid::EMPTY.id => fluid,
+                _ => return,
+            }
+        };
+        self.schedule_fluid_tick(x, y, z, fluid);
+    }
+
     fn maybe_update_surface_height_map(&mut self, index: usize, y: i16) {
         let current_height = self.flat_surface_height_map[index];
         self.flat_surface_height_map[index] = current_height.max(y);
