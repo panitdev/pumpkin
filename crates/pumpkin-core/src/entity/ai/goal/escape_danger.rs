@@ -1,4 +1,4 @@
-use pumpkin_data::tag::{self, Taggable};
+use pumpkin_data::tag::{self, Tag, Taggable};
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use std::sync::atomic::Ordering::Relaxed;
@@ -15,6 +15,7 @@ const VERTICAL_RANGE: i32 = 4;
 
 pub struct EscapeDangerGoal {
     speed: f64,
+    panic_causes: &'static Tag,
     goal_control: Controls,
     target: Option<Vector3<f64>>,
     running: bool,
@@ -23,8 +24,15 @@ pub struct EscapeDangerGoal {
 impl EscapeDangerGoal {
     #[must_use]
     pub fn new(speed: f64) -> Box<Self> {
+        Self::with_panic_causes(speed, &tag::DamageType::MINECRAFT_PANIC_CAUSES)
+    }
+
+    /// Vanilla `PanicGoal(mob, speed, panicCausingDamageTypes)`.
+    #[must_use]
+    pub fn with_panic_causes(speed: f64, panic_causes: &'static Tag) -> Box<Self> {
         Box::new(Self {
             speed,
+            panic_causes,
             goal_control: Controls::MOVE,
             target: None,
             running: false,
@@ -36,15 +44,12 @@ impl EscapeDangerGoal {
         self.running
     }
 
-    /// Only `#minecraft:panic_causes` damage makes a mob flee, and only while the source is still
-    /// remembered.
-    fn should_panic(mob: &dyn Mob) -> bool {
+    /// Only `panic_causes` damage makes a mob flee, and only while the source is still remembered.
+    fn should_panic(&self, mob: &dyn Mob) -> bool {
         mob.get_mob_entity()
             .living_entity
             .get_last_damage_type()
-            .is_some_and(|damage_type| {
-                damage_type.has_tag(&tag::DamageType::MINECRAFT_PANIC_CAUSES)
-            })
+            .is_some_and(|damage_type| damage_type.has_tag(self.panic_causes))
     }
 
     /// Nearest water within 5 blocks horizontally, only when the mob is not stuck in a block.
@@ -88,7 +93,7 @@ impl EscapeDangerGoal {
 
 impl Goal for EscapeDangerGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        if !Self::should_panic(mob) {
+        if !self.should_panic(mob) {
             return false;
         }
 

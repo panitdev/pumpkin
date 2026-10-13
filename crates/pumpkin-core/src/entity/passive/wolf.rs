@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicU8, Ordering},
 };
 
+use pumpkin_data::damage::DamageType;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
@@ -77,7 +78,13 @@ impl WolfEntity {
             // 1: SwimGoal (FloatGoal)
             goal_selector.add_goal(1, Box::new(SwimGoal::default()));
             // 1: EscapeDangerGoal (TamableAnimalPanicGoal)
-            goal_selector.add_goal(1, EscapeDangerGoal::new(1.5));
+            goal_selector.add_goal(
+                1,
+                EscapeDangerGoal::with_panic_causes(
+                    1.5,
+                    &tag::DamageType::MINECRAFT_PANIC_ENVIRONMENTAL_CAUSES,
+                ),
+            );
             // 2: SitWhenOrderedToGoal
             goal_selector.add_goal(2, Box::new(SitWhenOrderedToGoal::new()));
             // 3: Avoid Llama
@@ -191,6 +198,14 @@ impl Mob for WolfEntity {
 
     fn as_tamable(&self) -> Option<&dyn TamableAnimal> {
         Some(self)
+    }
+
+    // Vanilla `Wolf.hurtServer`: any hit the wolf isn't immune to cancels the sit order.
+    fn pre_damage(&self, damage_type: DamageType, source: Option<&dyn EntityBase>) -> bool {
+        if !self.get_entity().is_invulnerable_to(&damage_type, source) {
+            self.set_ordered_to_sit(false);
+        }
+        true
     }
 
     fn as_neutral(&self) -> Option<&dyn NeutralMob> {
