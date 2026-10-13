@@ -14,6 +14,7 @@ pub struct BreedGoal {
     speed: f64,
     mate: Option<Arc<dyn EntityBase>>,
     timer: i32,
+    breed_action: fn(&dyn Mob, &dyn EntityBase),
 }
 
 impl BreedGoal {
@@ -23,6 +24,19 @@ impl BreedGoal {
             speed,
             mate: None,
             timer: 0,
+            breed_action: Self::breed,
+        })
+    }
+
+    /// Vanilla leaves `BreedGoal.breed` overridable; `Turtle.TurtleBreedGoal` swaps the child
+    /// spawn for setting its egg.
+    #[must_use]
+    pub fn with_breed_action(speed: f64, breed_action: fn(&dyn Mob, &dyn EntityBase)) -> Box<Self> {
+        Box::new(Self {
+            speed,
+            mate: None,
+            timer: 0,
+            breed_action,
         })
     }
 
@@ -179,7 +193,7 @@ impl Goal for BreedGoal {
         self.timer += 1;
 
         if self.timer >= self.get_tick_count(60) && dist_sq < 9.0 {
-            Self::breed(mob, mate.as_ref());
+            (self.breed_action)(mob, mate.as_ref());
         }
     }
 

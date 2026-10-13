@@ -18,6 +18,7 @@ use crate::block::{
     OnScheduledTickArgs, RandomTickArgs,
 };
 use crate::entity::EntityBase;
+use crate::entity::passive::turtle::TurtleEntity;
 use crate::entity::r#type::from_type;
 use crate::world::World;
 
@@ -209,6 +210,12 @@ impl BlockBehaviour for TurtleEggBlock {
                     let turtle =
                         from_type(&EntityType::TURTLE, spawn_pos, args.world, Uuid::new_v4());
                     turtle.get_entity().set_age(-24000);
+                    // Vanilla `TurtleEggBlock.randomTick` sets the hatchling's home to the egg.
+                    if let Some(mob) = turtle.get_mob()
+                        && let Some(turtle_entity) = mob.cast_any().downcast_ref::<TurtleEntity>()
+                    {
+                        turtle_entity.set_home_pos(*args.position);
+                    }
                     args.world.spawn_entity_non_save(turtle);
                 }
             }

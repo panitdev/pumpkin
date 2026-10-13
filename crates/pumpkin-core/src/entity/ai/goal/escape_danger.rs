@@ -44,16 +44,21 @@ impl EscapeDangerGoal {
         self.running
     }
 
+    /// Sets the flee target, for subclasses that override `canStart` (`Turtle.TurtlePanicGoal`).
+    pub const fn set_target(&mut self, target: Vector3<f64>) {
+        self.target = Some(target);
+    }
+
     /// Only `panic_causes` damage makes a mob flee, and only while the source is still remembered.
-    fn should_panic(&self, mob: &dyn Mob) -> bool {
+    pub fn should_panic(&self, mob: &dyn Mob) -> bool {
         mob.get_mob_entity()
             .living_entity
             .get_last_damage_type()
             .is_some_and(|damage_type| damage_type.has_tag(self.panic_causes))
     }
 
-    /// Nearest water within 5 blocks horizontally, only when the mob is not stuck in a block.
-    fn look_for_water(mob: &dyn Mob) -> Option<BlockPos> {
+    /// Nearest water within `xz_dist` blocks horizontally, only when the mob is not stuck in a block.
+    pub fn look_for_water(mob: &dyn Mob, xz_dist: i32) -> Option<BlockPos> {
         let entity = mob.get_entity();
         let world = entity.world.load();
         let mob_pos = entity.block_pos.load();
@@ -68,9 +73,9 @@ impl EscapeDangerGoal {
         }
 
         let mut best: Option<(i32, BlockPos)> = None;
-        for dx in -WATER_SEARCH_XZ..=WATER_SEARCH_XZ {
+        for dx in -xz_dist..=xz_dist {
             for dy in -WATER_SEARCH_Y..=WATER_SEARCH_Y {
-                for dz in -WATER_SEARCH_XZ..=WATER_SEARCH_XZ {
+                for dz in -xz_dist..=xz_dist {
                     let pos = BlockPos::new(mob_pos.0.x + dx, mob_pos.0.y + dy, mob_pos.0.z + dz);
                     if !TryFindWaterGoal::is_water(&world, &pos) {
                         continue;
@@ -86,7 +91,7 @@ impl EscapeDangerGoal {
         best.map(|(_, pos)| pos)
     }
 
-    fn find_random_position(mob: &dyn Mob) -> Option<Vector3<f64>> {
+    pub fn find_random_position(mob: &dyn Mob) -> Option<Vector3<f64>> {
         default_random_pos::get_pos(mob, HORIZONTAL_RANGE, VERTICAL_RANGE)
     }
 }
@@ -98,7 +103,7 @@ impl Goal for EscapeDangerGoal {
         }
 
         if mob.get_entity().fire_ticks.load(Relaxed) > 0
-            && let Some(water) = Self::look_for_water(mob)
+            && let Some(water) = Self::look_for_water(mob, WATER_SEARCH_XZ)
         {
             self.target = Some(water.to_f64());
             return true;

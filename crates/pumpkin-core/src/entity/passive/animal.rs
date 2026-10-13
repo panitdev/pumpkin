@@ -11,6 +11,11 @@ use pumpkin_util::math::vector3::Vector3;
 pub trait Animal: Mob {
     fn is_food(&self, item_stack: &ItemStack) -> bool;
 
+    /// Vanilla `Animal.canFallInLove`. Turtles that carry an egg opt out.
+    fn can_fall_in_love(&self) -> bool {
+        !self.is_in_love()
+    }
+
     /// Animals prefer grass, then bright spots.
     fn animal_walk_target_value(&self, pos: &pumpkin_util::math::position::BlockPos) -> f32 {
         let world = self.get_mob_entity().living_entity.entity.world.load();
@@ -59,7 +64,7 @@ pub trait Animal: Mob {
                 .age
                 .load(std::sync::atomic::Ordering::Relaxed);
 
-            if age >= 0 && mob_entity.is_breeding_ready() && !mob_entity.is_in_love() {
+            if age >= 0 && mob_entity.is_breeding_ready() && self.can_fall_in_love() {
                 item_stack.decrement_unless_creative(player.gamemode.load(), 1);
 
                 mob_entity.set_love_ticks(600, Some(player.gameprofile.id));

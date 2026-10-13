@@ -1033,6 +1033,15 @@ pub trait Mob: EntityBase + Send + Sync {
             .map_or(0.0, |animal| animal.animal_walk_target_value(pos))
     }
 
+    /// Vanilla `PathNavigation.isStableDestination`, consulted by `GoalUtils.isNotStable`.
+    fn is_stable_destination(&self, pos: &BlockPos) -> bool {
+        self.get_entity()
+            .world
+            .load()
+            .get_block_state(&pos.down())
+            .is_solid()
+    }
+
     fn as_tamable(&self) -> Option<&dyn crate::entity::passive::tamable::TamableAnimal> {
         None
     }

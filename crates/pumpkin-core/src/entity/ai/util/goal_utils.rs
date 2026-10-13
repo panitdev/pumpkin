@@ -34,10 +34,10 @@ pub fn is_restricted(restrict: bool, mob: &dyn Mob, pos: &BlockPos) -> bool {
     restrict && !mob.get_mob_entity().is_in_position_target_range_pos(pos)
 }
 
-/// Nothing solid to stand on.
+/// Nothing solid to stand on, per the mob's navigation (`GoalUtils.isNotStable`).
 #[must_use]
-pub fn is_not_stable(world: &World, pos: &BlockPos) -> bool {
-    !world.get_block_state(&pos.down()).is_solid()
+pub fn is_not_stable(mob: &dyn Mob, pos: &BlockPos) -> bool {
+    !mob.is_stable_destination(pos)
 }
 
 #[must_use]
