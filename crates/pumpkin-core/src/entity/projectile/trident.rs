@@ -16,7 +16,7 @@ use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 
 use super::arrow::ArrowPickup;
-use super::{ProjectileHit, calculate_ray_intersection};
+use super::{ProjectileHit, calculate_ray_intersection, collision_block_pos};
 
 pub struct TridentEntity {
     pub entity: Entity,
@@ -242,20 +242,14 @@ impl EntityBase for TridentEntity {
             {
                 closest_t = t;
 
-                // Map back to block pos
-                let mut curr = 0;
-                for (len, pos) in &block_positions {
-                    curr += len;
-                    if idx < curr {
-                        let hit_pos = start_pos.add(&velocity.multiply(t, t, t));
-                        hit = Some(ProjectileHit::Block {
-                            pos: *pos,
-                            face: get_hit_face(hit_pos, *pos),
-                            hit_pos,
-                            normal: velocity.normalize().multiply(-1.0, -1.0, -1.0),
-                        });
-                        break;
-                    }
+                if let Some(pos) = collision_block_pos(&block_positions, idx) {
+                    let hit_pos = start_pos.add(&velocity.multiply(t, t, t));
+                    hit = Some(ProjectileHit::Block {
+                        pos,
+                        face: get_hit_face(hit_pos, pos),
+                        hit_pos,
+                        normal: velocity.normalize().multiply(-1.0, -1.0, -1.0),
+                    });
                 }
             }
         }

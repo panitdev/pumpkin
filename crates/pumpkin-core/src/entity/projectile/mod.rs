@@ -203,20 +203,14 @@ impl ThrownItemEntity {
                 && t < closest_t
             {
                 closest_t = t;
-                // Map back to block pos
-                let mut curr = 0;
-                for (len, pos) in &block_positions {
-                    curr += len;
-                    if idx < curr {
-                        let hit_pos = start_pos.add(&delta.multiply(t, t, t));
-                        hit = Some(ProjectileHit::Block {
-                            pos: *pos,
-                            face: get_hit_face(hit_pos, *pos),
-                            hit_pos,
-                            normal: delta.normalize().multiply(-1.0, -1.0, -1.0),
-                        });
-                        break;
-                    }
+                if let Some(pos) = collision_block_pos(&block_positions, idx) {
+                    let hit_pos = start_pos.add(&delta.multiply(t, t, t));
+                    hit = Some(ProjectileHit::Block {
+                        pos,
+                        face: get_hit_face(hit_pos, pos),
+                        hit_pos,
+                        normal: delta.normalize().multiply(-1.0, -1.0, -1.0),
+                    });
                 }
             }
         }
@@ -329,6 +323,15 @@ impl ThrownItemEntity {
     }
 }
 
+/// Finds the block that owns collision box `idx` from `World::get_block_collisions`, whose
+/// positions carry the end index of each block's boxes.
+fn collision_block_pos(positions: &[(usize, BlockPos)], idx: usize) -> Option<BlockPos> {
+    positions
+        .iter()
+        .find(|(end, _)| idx < *end)
+        .map(|(_, pos)| *pos)
+}
+
 /// Ray intersection algorithm for AABBs, returning a t value
 fn calculate_ray_intersection(
     start: &Vector3<f64>,
@@ -417,5 +420,23 @@ impl ProjectileHit {
             Self::Block { face, .. } => Some(*face),
             Self::Entity { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collision_block_pos_uses_end_indices() {
+        let a = BlockPos::new(0, 0, 0);
+        let b = BlockPos::new(1, 0, 0);
+        let c = BlockPos::new(0, 1, 0);
+        // `a` owns box 0, `b` owns boxes 1..3, `c` owns box 3.
+        let positions = [(1, a), (3, b), (4, c)];
+        assert_eq!(collision_block_pos(&positions, 0), Some(a));
+        assert_eq!(collision_block_pos(&positions, 2), Some(b));
+        assert_eq!(collision_block_pos(&positions, 3), Some(c));
+        assert_eq!(collision_block_pos(&positions, 4), None);
     }
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
-use crate::entity::projectile::{ProjectileHit, calculate_ray_intersection};
+use crate::entity::projectile::{ProjectileHit, calculate_ray_intersection, collision_block_pos};
 use crate::{
     entity::{Entity, EntityBase, living::LivingEntity, player::Player},
     server::Server,
@@ -733,20 +733,14 @@ impl EntityBase for ArrowEntity {
             {
                 closest_t = t;
 
-                // Map back to block pos
-                let mut curr = 0;
-                for (len, pos) in &block_positions {
-                    curr += len;
-                    if idx < curr {
-                        let hit_pos = start_pos.add(&velocity.multiply(t, t, t));
-                        hit = Some(ProjectileHit::Block {
-                            pos: *pos,
-                            face: get_hit_face(hit_pos, *pos),
-                            hit_pos,
-                            normal: velocity.normalize().multiply(-1.0, -1.0, -1.0),
-                        });
-                        break;
-                    }
+                if let Some(pos) = collision_block_pos(&block_positions, idx) {
+                    let hit_pos = start_pos.add(&velocity.multiply(t, t, t));
+                    hit = Some(ProjectileHit::Block {
+                        pos,
+                        face: get_hit_face(hit_pos, pos),
+                        hit_pos,
+                        normal: velocity.normalize().multiply(-1.0, -1.0, -1.0),
+                    });
                 }
             }
         }
