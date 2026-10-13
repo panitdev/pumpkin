@@ -1334,9 +1334,9 @@ pub trait Mob: EntityBase + Send + Sync {
             .and_then(crate::entity::passive::tamable::TamableAnimal::get_owner)
     }
 
-    fn is_sitting(&self) -> bool {
+    fn is_sit_ordered(&self) -> bool {
         self.as_tamable()
-            .is_some_and(crate::entity::passive::tamable::TamableAnimal::is_in_sitting_pose)
+            .is_some_and(crate::entity::passive::tamable::TamableAnimal::is_ordered_to_sit)
     }
 
     fn is_tamed(&self) -> bool {

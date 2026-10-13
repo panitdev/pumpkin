@@ -22,8 +22,8 @@ use crate::entity::{
         active_target::ActiveTargetGoal, avoid_entity::AvoidEntityGoal, breed::BreedGoal,
         escape_danger::EscapeDangerGoal, follow_owner::FollowOwnerGoal,
         follow_parent::FollowParentGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, swim::SwimGoal, tempt::TemptGoal,
-        wander_around::WanderAroundGoal,
+        look_at_entity::LookAtEntityGoal, sit_when_ordered_to::SitWhenOrderedToGoal,
+        swim::SwimGoal, tempt::TemptGoal, wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity},
     passive::{
@@ -113,6 +113,8 @@ impl CatEntity {
             goal_selector.add_goal(1, Box::new(SwimGoal::default()));
             // Goal 1: TamableAnimalPanicGoal (EscapeDangerGoal)
             goal_selector.add_goal(1, EscapeDangerGoal::new(1.5));
+            // Goal 2: SitWhenOrderedToGoal
+            goal_selector.add_goal(2, Box::new(SitWhenOrderedToGoal::new()));
             // Goal 4: CatTemptGoal
             goal_selector.add_goal(4, Box::new(TemptGoal::new(0.6, TEMPT_ITEMS, true)));
             // Goal 4: CatAvoidEntityGoal (when untamed)
@@ -169,10 +171,6 @@ impl CatEntity {
         flags
     }
 
-    pub fn is_sitting(&self) -> bool {
-        self.is_in_sitting_pose()
-    }
-
     pub fn is_lying(&self) -> bool {
         self.is_lying.load(Ordering::Relaxed)
     }
@@ -191,15 +189,6 @@ impl CatEntity {
         entity.set_synced_data(
             pumpkin_data::tracked_data::cat::CAT_COLLAR_COLOR,
             VarInt(color as i32),
-        );
-    }
-
-    pub fn set_sitting(&self, sitting: bool) {
-        self.set_in_sitting_pose(sitting);
-        let entity = self.get_entity();
-        entity.set_synced_data(
-            pumpkin_data::tracked_data::cat::TAMEABLE_FLAGS,
-            self.get_tame_flags(),
         );
     }
 
@@ -436,7 +425,7 @@ impl Mob for CatEntity {
 
                 let parent_interaction = self.mob_entity.mob_interact(player, item_stack);
                 if !parent_interaction {
-                    self.set_sitting(!self.is_sitting());
+                    self.set_ordered_to_sit(!self.is_ordered_to_sit());
                     return true;
                 }
                 return parent_interaction;
@@ -448,7 +437,7 @@ impl Mob for CatEntity {
             let mut rng = rand::rng();
             if rng.random_range(0..3) == 0 {
                 self.set_tame(true, Some(player.gameprofile.id));
-                self.set_sitting(true);
+                self.set_ordered_to_sit(true);
                 self.get_entity().world.load().send_entity_status(
                     self.get_entity(),
                     EntityStatus::TamingSucceeded,
