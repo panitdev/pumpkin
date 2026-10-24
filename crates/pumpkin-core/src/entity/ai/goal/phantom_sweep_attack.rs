@@ -54,7 +54,7 @@ impl Goal for PhantomSweepAttackGoal {
             return false;
         }
 
-        let tick_count = mob.get_entity().age.load(Relaxed);
+        let tick_count = mob.get_entity().tick_count.load(Relaxed);
         if tick_count > self.cat_search_tick {
             self.cat_search_tick = tick_count + 20;
             let world = mob.get_entity().world.load();

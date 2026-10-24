@@ -10,7 +10,9 @@ use pumpkin_util::math::boundingbox::{BoundingBox, EntityDimensions};
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 
+use crate::entity::ai::control::look_control::LookControl;
 use crate::entity::ai::control::phantom_move_control::PhantomMoveControl;
+use crate::entity::ai::control::{Control, LookControlTrait};
 use crate::entity::ai::goal::phantom_attack_player_target::PhantomAttackPlayerTargetGoal;
 use crate::entity::ai::goal::phantom_attack_strategy::PhantomAttackStrategyGoal;
 use crate::entity::ai::goal::phantom_circle_around_anchor::PhantomCircleAroundAnchorGoal;
@@ -65,21 +67,18 @@ impl PhantomEntity {
         };
 
         {
-            // Vanilla swaps in a look control whose `tick` does nothing.
-            let mut look_control = mob_arc
+            *mob_arc
                 .mob_entity
                 .look_control
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            look_control.set_disabled(true);
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Box::new(PhantomLookControl::default());
         };
 
         {
-            let mut goal_selector = mob_arc
-                .mob_entity
-                .goals_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let goal_selector = &mob_arc.mob_entity.goals_selector;
+
+            // TODO: PhantomCircleAroundAnchorGoal, PhantomSweepAttackGoal
             goal_selector.add_goal(
                 1,
                 Box::new(PhantomAttackStrategyGoal::new(Arc::downgrade(&mob_arc))),
@@ -93,11 +92,7 @@ impl PhantomEntity {
                 Box::new(PhantomCircleAroundAnchorGoal::new(Arc::downgrade(&mob_arc))),
             );
 
-            let mut target_selector = mob_arc
-                .mob_entity
-                .target_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let target_selector = &mob_arc.mob_entity.target_selector;
             target_selector.add_goal(
                 1,
                 Box::new(PhantomAttackPlayerTargetGoal::new(Arc::downgrade(&mob_arc))),
@@ -218,5 +213,35 @@ impl Mob for PhantomEntity {
                 Some(BlockPos::new(x, y, z))
             });
         self.set_phantom_size(nbt.get_int("size").unwrap_or(0));
+    }
+}
+
+/// Vanilla `Phantom.PhantomLookControl`: records look requests but its `tick` does nothing.
+#[derive(Default)]
+struct PhantomLookControl(LookControl);
+
+impl Control for PhantomLookControl {}
+
+impl LookControlTrait for PhantomLookControl {
+    fn tick(&mut self, _mob: &dyn Mob) {}
+
+    fn is_looking_at_target(&self) -> bool {
+        self.0.is_looking_at_target()
+    }
+
+    fn wanted_position(&self) -> Vector3<f64> {
+        self.0.wanted_position()
+    }
+
+    fn look_at_with_range(
+        &mut self,
+        x: f64,
+        y: f64,
+        z: f64,
+        max_yaw_change: f32,
+        max_pitch_change: f32,
+    ) {
+        self.0
+            .look_at_with_range(x, y, z, max_yaw_change, max_pitch_change);
     }
 }

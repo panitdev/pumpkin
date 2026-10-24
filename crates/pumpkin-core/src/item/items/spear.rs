@@ -225,7 +225,7 @@ impl SpearItem {
                 .last_attacking_id
                 .store(target_entity.entity_id, Ordering::Relaxed);
             living.last_attack_time.store(
-                user.get_entity().age.load(Ordering::Relaxed),
+                user.get_entity().tick_count.load(Ordering::Relaxed),
                 Ordering::Relaxed,
             );
         }
@@ -280,7 +280,7 @@ impl SpearItem {
             MOB_ACTION_FACTOR
         };
         let base_damage = living.get_attribute_base(&Attributes::ATTACK_DAMAGE) as f32;
-        let now = user_entity.age.load(Ordering::Relaxed);
+        let now = user_entity.tick_count.load(Ordering::Relaxed);
         let mut affected = false;
 
         for target in Self::targets_in_range(user, &server, stack) {
@@ -648,17 +648,7 @@ impl SpearItem {
                 return false;
             }
         }
-        Self::root_vehicle_id(user.get_entity()) != Self::root_vehicle_id(entity)
-    }
-
-    fn root_vehicle_id(entity: &Entity) -> i32 {
-        let mut id = entity.entity_id;
-        let mut vehicle = entity.get_vehicle();
-        while let Some(current) = vehicle {
-            id = current.get_entity().entity_id;
-            vehicle = current.get_entity().get_vehicle();
-        }
-        id
+        user.get_entity().root_vehicle_id() != entity.root_vehicle_id()
     }
 }
 

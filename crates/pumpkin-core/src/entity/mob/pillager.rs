@@ -55,11 +55,7 @@ impl PillagerEntity {
         };
 
         {
-            let mut goal_selector = mob_arc
-                .mob_entity
-                .goals_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let goal_selector = &mob_arc.mob_entity.goals_selector;
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(ObtainRaidLeaderBannerGoal));
@@ -80,11 +76,7 @@ impl PillagerEntity {
             );
             goal_selector.add_goal(10, Box::new(RandomLookAroundGoal::default()));
 
-            let mut target_selector = mob_arc
-                .mob_entity
-                .target_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let target_selector = &mob_arc.mob_entity.target_selector;
             target_selector.add_goal(
                 1,
                 Box::new(

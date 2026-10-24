@@ -44,14 +44,8 @@ pub fn register_spider_goals(mob_entity: &MobEntity, mob_weak: Weak<dyn Mob>) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Navigator::wall_climber();
 
-    let mut goal_selector = mob_entity
-        .goals_selector
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut target_selector = mob_entity
-        .target_selector
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let goal_selector = &mob_entity.goals_selector;
+    let target_selector = &mob_entity.target_selector;
 
     goal_selector.add_goal(1, Box::new(SwimGoal::default()));
     goal_selector.add_goal(
@@ -89,7 +83,8 @@ pub fn register_spider_goals(mob_entity: &MobEntity, mob_weak: Weak<dyn Mob>) {
 
 /// Vanilla `Spider.tick`: the climbing flag follows horizontal collision. `onClimbable` is
 /// the same flag, so it also lets the living entity climb.
-pub fn tick_climbing(mob_entity: &MobEntity, is_climbing: &AtomicBool) {
+pub fn tick_climbing(mob: &dyn Mob, is_climbing: &AtomicBool) {
+    let mob_entity = mob.get_mob_entity();
     let entity = &mob_entity.living_entity.entity;
     let climbing = entity.horizontal_collision.load(Ordering::Relaxed);
     if is_climbing.swap(climbing, Ordering::Relaxed) != climbing {
@@ -97,6 +92,9 @@ pub fn tick_climbing(mob_entity: &MobEntity, is_climbing: &AtomicBool) {
             pumpkin_data::tracked_data::spider::DATA_FLAGS_ID,
             i8::from(climbing),
         );
+        if let Some(meta) = mob.mob_metadata() {
+            entity.send_bedrock_actor_data(&meta.to_bedrock_actor_data());
+        }
     }
     mob_entity
         .living_entity
@@ -157,8 +155,7 @@ pub fn finalize_spider_spawn(
         SpawnGroupData::SpiderEffects(effect)
     });
 
-    let SpawnGroupData::SpiderEffects(effect) = &group_data;
-    if let Some(effect_type) = effect {
+    if let SpawnGroupData::SpiderEffects(Some(effect_type)) = &group_data {
         mob.living_entity.add_effect(Effect {
             effect_type,
             duration: -1,
@@ -185,9 +182,17 @@ impl Mob for SpiderEntity {
         &self.mob_entity
     }
 
+    fn mob_metadata(&self) -> Option<crate::entity::mob::MobMetadata> {
+        let mut meta = crate::entity::mob::MobMetadata::new();
+        if self.is_climbing() {
+            meta = meta.spider_climbing(true);
+        }
+        Some(meta)
+    }
+
     fn mob_tick(&self, _caller: &dyn EntityBase) {
         if self.mob_entity.living_entity.entity.is_alive() {
-            tick_climbing(&self.mob_entity, &self.is_climbing);
+            tick_climbing(self, &self.is_climbing);
         }
     }
 }

@@ -38,6 +38,7 @@ impl ItemBehaviour for NameTagItem {
         }
         item.decrement_unless_creative(player.gamemode.load(), 1);
     }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

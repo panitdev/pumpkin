@@ -54,6 +54,12 @@ pub trait StructurePieceBase: Send + Sync {
         self.get_structure_piece().bounding_box
     }
 
+    /// The area whose chunks have to place this piece. Wider than `bounding_box` for pieces that
+    /// vanilla places from one chunk while writing into its neighbours.
+    fn placement_box(&self) -> BlockBox {
+        self.bounding_box()
+    }
+
     fn translate(&mut self, x: i32, y: i32, z: i32) {
         self.get_structure_piece_mut().translate(x, y, z);
     }
@@ -77,21 +83,6 @@ pub trait StructurePieceBase: Send + Sync {
         _last_piece_type: &mut Option<StrongholdPieceType>,
         _has_portal_room: &mut bool,
 
-        _collector: &mut StructurePiecesCollector,
-        _pieces_to_process: &mut Vec<Box<dyn StructurePieceBase>>,
-    ) {
-    }
-
-    fn fill_openings_nether(
-        &self,
-        _start: &StructurePiece,
-        _random: &mut RandomGenerator,
-        _bridge_pieces: &mut Vec<
-            crate::generation::structure::structures::nether_fortress::PieceWeight,
-        >,
-        _corridor_pieces: &mut Vec<
-            crate::generation::structure::structures::nether_fortress::PieceWeight,
-        >,
         _collector: &mut StructurePiecesCollector,
         _pieces_to_process: &mut Vec<Box<dyn StructurePieceBase>>,
     ) {
@@ -459,6 +450,24 @@ impl StructurePiece {
         // }
     }
 
+    #[inline]
+    #[expect(clippy::too_many_arguments)]
+    pub fn maybe_generate_block(
+        &self,
+        world: &mut ProtoChunk,
+        box_limit: &BlockBox,
+        random: &mut impl RandomImpl,
+        threshold: f32,
+        x: i32,
+        y: i32,
+        z: i32,
+        block: &BlockState,
+    ) {
+        if random.next_f32() < threshold {
+            self.add_block(world, block, x, y, z, box_limit);
+        }
+    }
+
     /// Reorients a chest block state based on solid render neighbors, matching vanilla `StructurePiece.reorient`.
     #[must_use]
     pub fn reorient(
@@ -716,15 +725,15 @@ impl StructurePiecesCollector {
         let chunk_z = start_block_z(chunk.z);
         let chunk_box = BlockBox::new(
             chunk_x,
-            chunk.bottom_y() as i32,
+            chunk.bottom_y() as i32 + 1,
             chunk_z,
             chunk_x + 15,
-            i32::MAX,
+            chunk.bottom_y() as i32 + chunk.height() as i32 - 1,
             chunk_z + 15,
         );
 
         for piece in &mut self.pieces {
-            if piece.bounding_box().intersects(&chunk_box) {
+            if piece.placement_box().intersects(&chunk_box) {
                 piece.place(chunk, block_registry, random, seed, &chunk_box);
             }
         }
@@ -793,6 +802,27 @@ impl StructurePiecesCollector {
     }
 
     #[must_use]
+    pub fn get_adjusted_bounding_box(
+        &mut self,
+        key: &pumpkin_data::structures::StructureKeys,
+    ) -> BlockBox {
+        let bb = self.get_bounding_box();
+        let structure = pumpkin_data::structures::Structure::get(key);
+        if structure.terrain_adaptation == pumpkin_data::structures::TerrainAdaptation::None {
+            bb
+        } else {
+            bb.expand(12, 12, 12)
+        }
+    }
+
+    /// The pieces' `placement_box`es, for deciding which chunks place the structure.
+    #[must_use]
+    pub fn get_placement_bounding_box(&self) -> BlockBox {
+        BlockBox::encompass_all(self.pieces.iter().map(|p| p.placement_box()))
+            .unwrap_or_else(|| BlockBox::new(0, 0, 0, 0, 0, 0))
+    }
+
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.pieces.is_empty()
     }
@@ -815,6 +845,25 @@ impl StructurePosition {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get_bounding_box()
+    }
+
+    #[must_use]
+    pub fn get_adjusted_bounding_box(
+        &self,
+        key: &pumpkin_data::structures::StructureKeys,
+    ) -> BlockBox {
+        self.collector
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_adjusted_bounding_box(key)
+    }
+
+    #[must_use]
+    pub fn get_placement_bounding_box(&self) -> BlockBox {
+        self.collector
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_placement_bounding_box()
     }
 }
 

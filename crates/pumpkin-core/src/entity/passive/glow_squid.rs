@@ -133,18 +133,17 @@ impl Mob for GlowSquidEntity {
     }
 
     fn post_tick(&self) {
-        self.ageable_ai_step();
         tick_squid(self);
         self.tick_glow();
         tick_ambient_sound(self);
     }
 
-    fn travel_in_water(&self, caller: &dyn EntityBase, movement_input: Vector3<f64>) -> bool {
+    fn travel_in_water(&self, caller: &dyn EntityBase, _gravity: f64, _falling: bool) {
+        let movement_input = self.get_mob_entity().living_entity.movement_input.load();
         squid_travel_in_water(self, caller, movement_input);
-        true
     }
 
-    fn is_pushed_by_fluids(&self) -> bool {
+    fn mob_is_pushed_by_fluids(&self) -> bool {
         false
     }
 

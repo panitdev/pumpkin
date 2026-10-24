@@ -8,7 +8,6 @@ use pumpkin_data::sound::Sound;
 use pumpkin_protocol::java::client::play::{CGameEvent, GameEvent};
 use pumpkin_util::GameMode;
 use pumpkin_util::math::position::BlockPos;
-use pumpkin_util::math::vector3::Vector3;
 
 use crate::entity::custom_sound::CustomSound;
 use crate::entity::mob::guardian::{
@@ -157,7 +156,7 @@ impl Mob for ElderGuardianEntity {
 
     fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
         let entity = &self.mob_entity.living_entity.entity;
-        if (entity.age.load(Ordering::Relaxed) + entity.entity_id) % EFFECT_INTERVAL == 0 {
+        if (entity.tick_count.load(Ordering::Relaxed) + entity.entity_id) % EFFECT_INTERVAL == 0 {
             self.curse_players_around();
         }
 
@@ -176,8 +175,8 @@ impl Mob for ElderGuardianEntity {
         true
     }
 
-    fn travel_in_water(&self, caller: &dyn EntityBase, movement_input: Vector3<f64>) -> bool {
+    fn travel_in_water(&self, caller: &dyn EntityBase, _gravity: f64, _falling: bool) {
+        let movement_input = self.get_mob_entity().living_entity.movement_input.load();
         guardian_travel_in_water(self, caller, movement_input);
-        true
     }
 }

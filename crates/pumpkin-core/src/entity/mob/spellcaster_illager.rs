@@ -166,7 +166,8 @@ impl SpellcasterUseSpell {
     /// that forbid a target, like `Evoker.EvokerWololoSpellGoal`.
     #[must_use]
     pub fn can_start_ignoring_target(&self, mob: &dyn Mob, is_casting_spell: bool) -> bool {
-        !is_casting_spell && mob.get_entity().age.load(Ordering::Relaxed) >= self.next_attack_tick
+        !is_casting_spell
+            && mob.get_entity().tick_count.load(Ordering::Relaxed) >= self.next_attack_tick
     }
 
     /// Vanilla `SpellcasterUseSpellGoal.canUse`.
@@ -208,7 +209,8 @@ impl SpellcasterUseSpell {
         caster
             .spellcaster_data()
             .set_spell_casting_time(casting_time);
-        self.next_attack_tick = mob.get_entity().age.load(Ordering::Relaxed) + casting_interval;
+        self.next_attack_tick =
+            mob.get_entity().tick_count.load(Ordering::Relaxed) + casting_interval;
         if let Some(sound) = prepare_sound {
             mob.get_entity().play_sound(sound);
         }

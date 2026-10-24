@@ -11,7 +11,7 @@ use pumpkin_macros::pumpkin_block;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::tick::TickPriority;
-use pumpkin_world::world::BlockFlags;
+use pumpkin_world::world::{BlockAccessor, BlockFlags};
 use uuid::Uuid;
 
 use crate::block::{
@@ -42,6 +42,18 @@ impl FrogspawnBlock {
 
     fn can_survive(world: &World, pos: &BlockPos) -> bool {
         Self::may_place_on(world, &pos.down())
+    }
+
+    /// `may_place_on` for structure placement, which has no world and only sees block states.
+    fn can_survive_accessor(accessor: &dyn BlockAccessor, pos: &BlockPos) -> bool {
+        let below_pos = pos.down();
+        let (below_block, below_state) = accessor.get_block_and_state(&below_pos);
+        let (here_block, _) = accessor.get_block_and_state(pos);
+        let is_water_source_below =
+            below_block == &Block::WATER && below_state.id == Block::WATER.default_state.id;
+        (is_water_source_below || below_block.has_tag(&BlockTag::MINECRAFT_SUPPORTS_FROGSPAWN))
+            && here_block != &Block::WATER
+            && here_block != &Block::LAVA
     }
 
     fn get_hatch_delay() -> u32 {
@@ -88,8 +100,10 @@ impl FrogspawnBlock {
 
 impl BlockBehaviour for FrogspawnBlock {
     fn can_place_at(&self, args: CanPlaceAtArgs<'_>) -> bool {
-        args.world
-            .is_none_or(|world| Self::can_survive(world, args.position))
+        args.world.map_or_else(
+            || Self::can_survive_accessor(args.block_accessor, args.position),
+            |world| Self::can_survive(world, args.position),
+        )
     }
 
     fn get_state_for_neighbor_update(

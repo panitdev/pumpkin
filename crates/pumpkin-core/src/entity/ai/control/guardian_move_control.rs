@@ -1,19 +1,14 @@
+use crate::entity::ai::control::move_control::{MoveControl, Operation};
 use crate::entity::ai::control::{Control, MoveControlTrait};
 use crate::entity::mob::Mob;
 use pumpkin_data::attributes::Attributes;
 use pumpkin_util::math::vector3::Vector3;
 use std::sync::atomic::Ordering;
 
-/// Speed modifier of every goal that moves a guardian. The navigator does not expose its own.
-const GUARDIAN_SPEED_MODIFIER: f64 = 1.0;
-
 /// Vanilla `Guardian.GuardianMoveControl`.
-///
-/// Pumpkin's navigators write the movement input themselves, so the next path node stands in for
-/// the wanted position vanilla's `WaterBoundPathNavigation` hands to the move control.
 #[derive(Default)]
 pub struct GuardianMoveControl {
-    speed: f32,
+    inner: MoveControl,
 }
 
 impl Control for GuardianMoveControl {}
@@ -26,54 +21,37 @@ impl MoveControlTrait for GuardianMoveControl {
         let mob_entity = mob.get_mob_entity();
         let living_entity = &mob_entity.living_entity;
         let entity = &living_entity.entity;
-
-        let wanted = mob_entity.navigator.try_lock().ok().and_then(|navigator| {
-            if navigator.is_done() {
-                return None;
-            }
-            navigator.get_path()?.get_next_node_pos()
-        });
         let state = guardian.guardian_state();
 
         let pos = entity.pos.load();
-        let delta = wanted.map(|node| {
-            Vector3::new(
-                f64::from(node.0.x) + 0.5 - pos.x,
-                f64::from(node.0.y) + 0.5 - pos.y,
-                f64::from(node.0.z) + 0.5 - pos.z,
-            )
-        });
-        let Some((delta, length)) = delta
-            .map(|delta| (delta, delta.length()))
-            .filter(|(_, length)| *length > 1.0E-7)
-        else {
-            self.speed = 0.0;
-            living_entity
-                .movement_input
-                .store(Vector3::new(0.0, 0.0, 0.0));
+        let delta = Vector3::new(
+            self.inner.wanted_x - pos.x,
+            self.inner.wanted_y - pos.y,
+            self.inner.wanted_z - pos.z,
+        );
+        let length = delta.length();
+        if self.inner.operation != Operation::MoveTo || mob_entity.steered().navigator().is_done() {
+            mob_entity.set_speed(0.0);
             state.set_moving(entity, false);
             return;
-        };
+        }
 
         let xd = delta.x / length;
         let yd = delta.y / length;
         let zd = delta.z / length;
         let y_rot_d = (delta.z.atan2(delta.x).to_degrees() as f32) - 90.0;
-        let yaw = self.change_angle(entity.yaw.load(), y_rot_d, 90.0);
+        let yaw = MoveControl::rotlerp(entity.yaw.load(), y_rot_d, MoveControl::MAX_TURN);
         entity.yaw.store(yaw);
         entity.body_yaw.store(yaw);
 
-        let target_speed = (GUARDIAN_SPEED_MODIFIER
+        let target_speed = (self.inner.speed_modifier
             * living_entity.get_attribute_value(&Attributes::MOVEMENT_SPEED))
             as f32;
-        let new_speed = self.speed + (target_speed - self.speed) * 0.125;
-        self.speed = new_speed;
-        // Vanilla `Mob.setSpeed` also sets the forward input `travelInWater` pushes with.
-        living_entity
-            .movement_input
-            .store(Vector3::new(0.0, 0.0, f64::from(new_speed)));
+        let speed = living_entity.get_speed();
+        let new_speed = speed + (target_speed - speed) * 0.125;
+        mob_entity.set_speed(new_speed);
 
-        let ticks = f64::from(entity.age.load(Ordering::Relaxed) + entity.entity_id);
+        let ticks = f64::from(entity.tick_count.load(Ordering::Relaxed) + entity.entity_id);
         let push = (ticks * 0.5).sin() * 0.05;
         let yaw_rad = f64::from(yaw.to_radians());
         let cos = yaw_rad.cos();
@@ -110,5 +88,17 @@ impl MoveControlTrait for GuardianMoveControl {
         drop(look_control);
 
         state.set_moving(entity, true);
+    }
+
+    fn set_wanted_position(&mut self, x: f64, y: f64, z: f64, speed_modifier: f64) {
+        self.inner.set_wanted_position(x, y, z, speed_modifier);
+    }
+
+    fn strafe(&mut self, forwards: f32, right: f32) {
+        self.inner.strafe(forwards, right);
+    }
+
+    fn has_wanted(&self) -> bool {
+        self.inner.has_wanted()
     }
 }

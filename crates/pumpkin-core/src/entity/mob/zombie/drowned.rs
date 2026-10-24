@@ -1,7 +1,9 @@
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 
 use crate::entity::Entity;
 use crate::entity::EntityBase;
+use crate::entity::ai::control::move_control::{MoveControl, Operation};
 use crate::entity::ai::control::{Control, MoveControlTrait};
 use crate::entity::ai::goal::{
     Controls, Goal, ParentHandle,
@@ -26,6 +28,7 @@ use crate::entity::mob::{Mob, RangedAttackMob};
 use crate::entity::projectile::arrow::ArrowPickup;
 use crate::entity::projectile::trident::TridentEntity;
 use crate::world::World;
+use pumpkin_data::attributes::Attributes;
 use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
@@ -88,18 +91,13 @@ fn register_drowned_goals(mob: &Arc<DrownedEntity>) {
     *mob_entity
         .move_control
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Box::new(DrownedMoveControl);
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Box::new(DrownedMoveControl::default());
 
     let sea_level = mob_entity.living_entity.entity.world.load().sea_level;
 
-    let mut goal_selector = mob_entity
-        .goals_selector
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut target_selector = mob_entity
-        .target_selector
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let goal_selector = &mob_entity.goals_selector;
+    let target_selector = &mob_entity.target_selector;
 
     goal_selector.add_goal(0, Box::new(SwimGoal::default()));
     goal_selector.add_goal(1, Box::new(DrownedGoToWaterGoal::new(1.0)));
@@ -404,31 +402,84 @@ impl Goal for DrownedSwimUpGoal {
     }
 }
 
-/// Vanilla `Drowned.DrownedMoveControl`. The amphibious navigator already drives the swimming
-/// movement in Pumpkin, so this only adds the vanilla buoyancy.
-// TODO: `Drowned.DrownedMoveControl` speed lerp and direct velocity input once Pumpkin's
-// amphibious navigator stops setting `movement_input` itself.
-pub struct DrownedMoveControl;
+/// Vanilla `Drowned.DrownedMoveControl`.
+#[derive(Default)]
+pub struct DrownedMoveControl {
+    inner: MoveControl,
+}
 
 impl Control for DrownedMoveControl {}
 
 impl MoveControlTrait for DrownedMoveControl {
     fn tick(&mut self, mob: &dyn Mob) {
-        let entity = mob.get_entity();
+        let mob_entity = mob.get_mob_entity();
+        let living_entity = &mob_entity.living_entity;
+        let entity = &living_entity.entity;
         let Some(zombie) = mob.as_zombie() else {
             return;
         };
-        if zombie.wants_to_swim() && entity.is_in_water() {
-            let target_above = mob
-                .get_mob_entity()
-                .get_target()
-                .is_some_and(|target| target.get_entity().pos.load().y > entity.pos.load().y);
-            if target_above || zombie.is_searching_for_land() {
-                let mut velocity = entity.velocity.load();
-                velocity.y += 0.002;
-                entity.velocity.store(velocity);
+        if !(zombie.wants_to_swim() && entity.is_in_water()) {
+            if !entity.on_ground.load(Ordering::Relaxed) {
+                let velocity = entity.velocity.load();
+                entity
+                    .velocity
+                    .store(Vector3::new(velocity.x, velocity.y - 0.008, velocity.z));
             }
+            self.inner.tick(mob);
+            return;
         }
+
+        let target_above = mob_entity
+            .get_target()
+            .is_some_and(|target| target.get_entity().pos.load().y > entity.pos.load().y);
+        if target_above || zombie.is_searching_for_land() {
+            let velocity = entity.velocity.load();
+            entity
+                .velocity
+                .store(Vector3::new(velocity.x, velocity.y + 0.002, velocity.z));
+        }
+
+        if self.inner.operation != Operation::MoveTo || mob_entity.steered().navigator().is_done() {
+            mob_entity.set_speed(0.0);
+            return;
+        }
+
+        let pos = entity.pos.load();
+        let xd = self.inner.wanted_x - pos.x;
+        let yd = self.inner.wanted_y - pos.y;
+        let zd = self.inner.wanted_z - pos.z;
+        let dd = (xd * xd + yd * yd + zd * zd).sqrt();
+        let yd = yd / dd;
+        let y_rot_d = (zd.atan2(xd).to_degrees() as f32) - 90.0;
+        let yaw = MoveControl::rotlerp(entity.yaw.load(), y_rot_d, MoveControl::MAX_TURN);
+        entity.yaw.store(yaw);
+        entity.body_yaw.store(yaw);
+
+        let target_speed = (self.inner.speed_modifier
+            * living_entity.get_attribute_value(&Attributes::MOVEMENT_SPEED))
+            as f32;
+        let speed = living_entity.get_speed();
+        let new_speed = speed + 0.125 * (target_speed - speed);
+        mob_entity.set_speed(new_speed);
+        let new_speed = f64::from(new_speed);
+        let velocity = entity.velocity.load();
+        entity.velocity.store(Vector3::new(
+            velocity.x + new_speed * xd * 0.005,
+            velocity.y + new_speed * yd * 0.1,
+            velocity.z + new_speed * zd * 0.005,
+        ));
+    }
+
+    fn set_wanted_position(&mut self, x: f64, y: f64, z: f64, speed_modifier: f64) {
+        self.inner.set_wanted_position(x, y, z, speed_modifier);
+    }
+
+    fn strafe(&mut self, forwards: f32, right: f32) {
+        self.inner.strafe(forwards, right);
+    }
+
+    fn has_wanted(&self) -> bool {
+        self.inner.has_wanted()
     }
 }
 
@@ -657,7 +708,7 @@ zombie_mob!(DrownedEntity, entity, {
     }
 
     /// Vanilla `Drowned.isPushedByFluid`.
-    fn is_pushed_by_fluids(&self) -> bool {
+    fn mob_is_pushed_by_fluids(&self) -> bool {
         !self.entity.mob_entity.living_entity.entity.is_swimming()
     }
 });

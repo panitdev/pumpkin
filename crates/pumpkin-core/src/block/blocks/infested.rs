@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
-use pumpkin_data::Block;
+use pumpkin_data::block_properties::{Axis, PaleOakWoodLikeProperties};
 use pumpkin_data::data_component_impl::EnchantmentsImpl;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::tag::{Enchantment as EnchantmentTag, Taggable};
+use pumpkin_data::{Block, BlockState, BlockStateId, Rotation};
 use pumpkin_macros::pumpkin_block;
 use pumpkin_util::GameMode;
 use pumpkin_util::math::position::BlockPos;
@@ -13,6 +14,7 @@ use uuid::Uuid;
 
 use crate::block::BlockBehaviour;
 use crate::block::BrokenArgs;
+use crate::block::OnPlaceArgs;
 use crate::block::SpawnAfterBreakArgs;
 use crate::entity::r#type::from_type;
 use crate::world::World;
@@ -43,6 +45,40 @@ impl InfestedBlock {
 }
 
 impl BlockBehaviour for InfestedBlock {
+    fn on_place(&self, args: OnPlaceArgs<'_>) -> BlockStateId {
+        if args.block == &Block::INFESTED_DEEPSLATE {
+            let mut props = PaleOakWoodLikeProperties::default(args.block);
+            props.axis = args.direction.to_axis();
+            props.to_state_id(args.block)
+        } else {
+            args.block.default_state.id
+        }
+    }
+
+    fn rotate(
+        &self,
+        block: &Block,
+        state_id: BlockStateId,
+        rotation: Rotation,
+    ) -> &'static BlockState {
+        if block == &Block::INFESTED_DEEPSLATE {
+            let mut props = PaleOakWoodLikeProperties::from_state_id(state_id);
+            if matches!(
+                rotation,
+                Rotation::Clockwise90 | Rotation::CounterClockwise90
+            ) {
+                props.axis = match props.axis {
+                    Axis::X => Axis::Z,
+                    Axis::Z => Axis::X,
+                    Axis::Y => Axis::Y,
+                };
+            }
+            BlockState::from_id(props.to_state_id(block))
+        } else {
+            BlockState::from_id(state_id)
+        }
+    }
+
     fn broken(&self, args: BrokenArgs<'_>) {
         // Vanilla `spawnAfterBreak` runs from `playerDestroy`, which is skipped in creative
         // (`preventsBlockDrops`) and when the tool cannot harvest the block.

@@ -10,14 +10,14 @@ use pumpkin_data::tracked_data;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::var_int::VarInt;
 use pumpkin_protocol::java::client::play::{CGameEvent, GameEvent};
-use pumpkin_util::math::vector3::Vector3;
 
+use super::abstract_fish::{self, AbstractFish, FishData, abstract_fish_impls, abstract_fish_mob};
 use crate::entity::ai::goal::Goal;
 use crate::entity::ai::target_predicate::TargetPredicate;
+use crate::entity::bucketable::Bucketable;
 use crate::entity::{
     Entity, EntityBase,
     mob::{Mob, MobEntity},
-    passive::fish::{self, AbstractFish},
     player::Player,
 };
 
@@ -42,6 +42,7 @@ const TOUCH_RADIUS: f64 = 0.3;
 /// Wiki: <https://minecraft.wiki/w/Pufferfish>
 pub struct PufferfishEntity {
     pub mob_entity: MobEntity,
+    fish_data: FishData,
     puff_state: AtomicI32,
     inflate_counter: AtomicI32,
     deflate_timer: AtomicI32,
@@ -49,21 +50,21 @@ pub struct PufferfishEntity {
 
 impl PufferfishEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
-        let mob_entity = MobEntity::new(entity);
+        let mut mob_entity = MobEntity::new(entity);
+        abstract_fish::initialize_fish_movement(&mut mob_entity);
         let pufferfish = Self {
             mob_entity,
+            fish_data: FishData::default(),
             puff_state: AtomicI32::new(DEFAULT_PUFF_STATE),
             inflate_counter: AtomicI32::new(0),
             deflate_timer: AtomicI32::new(0),
         };
         let mob_arc = Arc::new(pufferfish);
 
-        fish::register_fish(&mob_arc.mob_entity);
+        abstract_fish::register_fish_goals(&mob_arc.mob_entity);
         mob_arc
             .mob_entity
             .goals_selector
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .add_goal(1, Box::new(PufferfishPuffGoal::new(mob_arc.clone())));
         // Vanilla `Pufferfish` constructor calls `refreshDimensions`.
         mob_arc.apply_dimensions();
@@ -86,7 +87,7 @@ impl PufferfishEntity {
 
     /// Vanilla `Pufferfish.getDefaultDimensions`: the type's box scaled by the puff state.
     fn apply_dimensions(&self) {
-        fish::apply_scaled_dimensions(self.get_entity(), get_scale(self.get_puff_state()));
+        abstract_fish::apply_scaled_dimensions(self.get_entity(), get_scale(self.get_puff_state()));
     }
 
     /// Vanilla `Pufferfish.tick`: inflate and deflate over time, sounding the transitions.
@@ -174,6 +175,29 @@ impl AbstractFish for PufferfishEntity {
     fn flop_sound(&self) -> Sound {
         Sound::EntityPufferFishFlop
     }
+    fn fish_data(&self) -> &FishData {
+        &self.fish_data
+    }
+    fn ambient_sound(&self) -> Option<Sound> {
+        None
+    }
+}
+
+abstract_fish_impls!(PufferfishEntity);
+
+impl Bucketable for PufferfishEntity {
+    fn is_from_bucket(&self) -> bool {
+        self.fish_data.from_bucket.load(Ordering::Relaxed)
+    }
+    fn set_from_bucket(&self, from_bucket: bool) {
+        abstract_fish::set_fish_from_bucket(self, from_bucket);
+    }
+    fn bucket_item(&self) -> &'static pumpkin_data::item::Item {
+        &pumpkin_data::item::Item::PUFFERFISH_BUCKET
+    }
+    fn pickup_sound(&self) -> Sound {
+        Sound::ItemBucketFillFish
+    }
 }
 
 impl Mob for PufferfishEntity {
@@ -181,15 +205,16 @@ impl Mob for PufferfishEntity {
         &self.mob_entity
     }
 
+    abstract_fish_mob!();
+
+    /// Vanilla `Pufferfish.tick`.
     fn mob_tick(&self, _caller: &dyn EntityBase) {
         self.tick_puff_state();
-        fish::fish_tick(self);
-        self.touch_nearby_mobs();
     }
 
-    fn travel_in_water(&self, caller: &dyn EntityBase, movement_input: Vector3<f64>) -> bool {
-        fish::fish_travel_in_water(self, caller, movement_input);
-        true
+    /// Vanilla `Pufferfish.aiStep`, after `AbstractFish.aiStep`.
+    fn mob_ai_step(&self) {
+        self.touch_nearby_mobs();
     }
 
     fn mob_player_collision(&self, player: &Arc<Player>) {
@@ -221,6 +246,7 @@ impl Mob for PufferfishEntity {
     }
 
     fn mob_init_data_tracker(&self) {
+        self.set_from_bucket(self.is_from_bucket());
         self.get_entity().set_synced_data(
             tracked_data::pufferfish::PUFF_STATE,
             VarInt(self.get_puff_state()),
@@ -228,10 +254,12 @@ impl Mob for PufferfishEntity {
     }
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
+        self.fish_write_nbt(nbt);
         nbt.put_int("PuffState", self.get_puff_state());
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
+        self.fish_read_nbt(nbt);
         if let Some(state) = nbt.get_int("PuffState") {
             self.set_puff_state(state.min(STATE_FULL));
         }

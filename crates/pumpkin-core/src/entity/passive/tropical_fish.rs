@@ -1,18 +1,24 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::{Arc, Weak};
 
+use pumpkin_data::data_component_impl::{
+    TropicalFishBaseColorImpl, TropicalFishPatternColorImpl, TropicalFishPatternImpl,
+};
 use pumpkin_data::dye_color::DyeColor;
+use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::Sound;
 use pumpkin_data::tracked_data;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::var_int::VarInt;
-use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
 
+use super::abstract_fish::{self, AbstractFish, FishData, abstract_fish_impls, abstract_fish_mob};
+use super::abstract_schooling_fish::{AbstractSchoolingFish, SchoolingFishData};
+use crate::entity::ai::goal::follow_flock_leader::FollowFlockLeaderGoal;
+use crate::entity::bucketable::Bucketable;
 use crate::entity::{
     Entity, EntityBase,
     mob::{Mob, MobEntity, spawn::SpawnGroupData},
-    passive::fish::{self, AbstractFish, AbstractSchoolingFish, FishState},
 };
 
 /// Vanilla `TropicalFish.Pattern`: the fish's shape. `base` is the small (0) or large (1)
@@ -54,6 +60,32 @@ impl Pattern {
     #[must_use]
     pub const fn packed_id(self) -> i32 {
         self as i32
+    }
+
+    /// The serialized name, as in the `tropical_fish/pattern` component.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Kob => "kob",
+            Self::Sunstreak => "sunstreak",
+            Self::Snooper => "snooper",
+            Self::Dasher => "dasher",
+            Self::Brinely => "brinely",
+            Self::Spotty => "spotty",
+            Self::Flopper => "flopper",
+            Self::Stripey => "stripey",
+            Self::Glitter => "glitter",
+            Self::Blockfish => "blockfish",
+            Self::Betty => "betty",
+            Self::Clayfish => "clayfish",
+        }
+    }
+
+    #[must_use]
+    pub fn by_name(name: &str) -> Option<Self> {
+        Self::VALUES
+            .into_iter()
+            .find(|pattern| pattern.name() == name)
     }
 
     /// Vanilla `ByIdMap.sparse(..., KOB)`: an unknown id falls back to `KOB`.
@@ -115,26 +147,26 @@ const COMMON_VARIANTS: [Variant; 22] = [
 /// Wiki: <https://minecraft.wiki/w/Tropical_Fish>
 pub struct TropicalFishEntity {
     pub mob_entity: MobEntity,
-    schooling: FishState,
+    fish_data: FishData,
+    schooling_data: SchoolingFishData,
     variant: AtomicI32,
 }
 
 impl TropicalFishEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
-        let mob_entity = MobEntity::new(entity);
-        let tropical_fish = Self {
+        let mut mob_entity = MobEntity::new(entity);
+        abstract_fish::initialize_fish_movement(&mut mob_entity);
+        let mob_arc = Arc::new_cyclic(|weak: &std::sync::Weak<Self>| Self {
             mob_entity,
-            schooling: FishState::default(),
+            fish_data: FishData::default(),
+            schooling_data: SchoolingFishData::new(weak.clone()),
             variant: AtomicI32::new(DEFAULT_VARIANT_PACKED),
-        };
-        let mob_arc = Arc::new(tropical_fish);
-        let entity_weak: Weak<dyn EntityBase> = {
-            let entity_arc: Arc<dyn EntityBase> = mob_arc.clone();
-            Arc::downgrade(&entity_arc)
-        };
-
-        fish::register_fish(&mob_arc.mob_entity);
-        fish::register_schooling_goals(&mob_arc.mob_entity, &entity_weak);
+        });
+        abstract_fish::register_fish_goals(&mob_arc.mob_entity);
+        mob_arc
+            .mob_entity
+            .goals_selector
+            .add_goal(5, Box::new(FollowFlockLeaderGoal::default()));
 
         mob_arc
     }
@@ -156,6 +188,31 @@ impl TropicalFishEntity {
     #[must_use]
     pub fn get_pattern_color(&self) -> DyeColor {
         get_pattern_color(self.get_packed_variant())
+    }
+
+    /// Vanilla `TropicalFish.applyImplicitComponent` for the pattern and color components.
+    pub fn set_pattern(&self, pattern: Pattern) {
+        self.set_variant(pack_variant(
+            pattern,
+            self.get_base_color(),
+            self.get_pattern_color(),
+        ));
+    }
+
+    pub fn set_base_color(&self, color: DyeColor) {
+        self.set_variant(pack_variant(
+            self.get_pattern(),
+            color,
+            self.get_pattern_color(),
+        ));
+    }
+
+    pub fn set_pattern_color(&self, color: DyeColor) {
+        self.set_variant(pack_variant(
+            self.get_pattern(),
+            self.get_base_color(),
+            color,
+        ));
     }
 
     fn set_variant(&self, packed_variant: i32) {
@@ -193,11 +250,48 @@ impl AbstractFish for TropicalFishEntity {
     fn flop_sound(&self) -> Sound {
         Sound::EntityTropicalFishFlop
     }
+    fn fish_data(&self) -> &FishData {
+        &self.fish_data
+    }
+    fn ambient_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityTropicalFishAmbient)
+    }
 }
 
 impl AbstractSchoolingFish for TropicalFishEntity {
-    fn schooling(&self) -> &FishState {
-        &self.schooling
+    fn schooling_data(&self) -> &SchoolingFishData {
+        &self.schooling_data
+    }
+}
+
+abstract_fish_impls!(TropicalFishEntity);
+
+impl Bucketable for TropicalFishEntity {
+    fn is_from_bucket(&self) -> bool {
+        self.fish_data.from_bucket.load(Ordering::Relaxed)
+    }
+    fn set_from_bucket(&self, from_bucket: bool) {
+        abstract_fish::set_fish_from_bucket(self, from_bucket);
+    }
+    fn bucket_item(&self) -> &'static pumpkin_data::item::Item {
+        &pumpkin_data::item::Item::TROPICAL_FISH_BUCKET
+    }
+    fn pickup_sound(&self) -> Sound {
+        Sound::ItemBucketFillFish
+    }
+
+    /// Vanilla `TropicalFish.saveToBucketTag`.
+    fn save_to_bucket_tag(&self, bucket: &mut ItemStack) {
+        crate::entity::bucketable::save_default_data_to_bucket_tag(self, bucket);
+        bucket.set_data_component(TropicalFishPatternImpl {
+            value: self.get_pattern().name().into(),
+        });
+        bucket.set_data_component(TropicalFishBaseColorImpl {
+            value: self.get_base_color().name().into(),
+        });
+        bucket.set_data_component(TropicalFishPatternColorImpl {
+            value: self.get_pattern_color().name().into(),
+        });
     }
 }
 
@@ -206,17 +300,14 @@ impl Mob for TropicalFishEntity {
         &self.mob_entity
     }
 
+    abstract_fish_mob!();
+
     fn as_schooling_fish(&self) -> Option<&dyn AbstractSchoolingFish> {
         Some(self)
     }
 
-    fn mob_tick(&self, _caller: &dyn EntityBase) {
-        fish::fish_tick(self);
-    }
-
-    fn travel_in_water(&self, caller: &dyn EntityBase, movement_input: Vector3<f64>) -> bool {
-        fish::fish_travel_in_water(self, caller, movement_input);
-        true
+    fn post_tick(&self) {
+        self.schooling_tick();
     }
 
     fn finalize_spawn(
@@ -224,26 +315,35 @@ impl Mob for TropicalFishEntity {
         _world: &Arc<crate::world::World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        self.mob_entity.finalize_spawn_base();
+        let group_data = self.finalize_school_spawn(group_data);
+        // Vanilla `TropicalFishGroupData`: the school shares the variant its leader rolled.
+        if let Some(SpawnGroupData::TropicalFishSchool(_, packed_variant)) = group_data {
+            self.set_variant(packed_variant);
+            return group_data;
+        }
 
-        // Vanilla shares the rolled variant across a spawn group through
-        // `TropicalFishGroupData`, which Pumpkin's `SpawnGroupData` cannot carry yet, so each
-        // fish rolls its own.
         let mut rng = rand::rng();
-        let variant = if rng.random::<f32>() < COMMON_VARIANT_CHANCE {
-            COMMON_VARIANTS[rng.random_range(0..COMMON_VARIANTS.len())]
-        } else {
-            let pattern = Pattern::VALUES[rng.random_range(0..Pattern::VALUES.len())];
-            let base_color = DyeColor::by_id(rng.random_range(0u8..16)).unwrap_or_default();
-            let pattern_color = DyeColor::by_id(rng.random_range(0u8..16)).unwrap_or_default();
-            (pattern, base_color, pattern_color)
-        };
-        self.set_variant(pack_variant(variant.0, variant.1, variant.2));
-
+        if rng.random::<f32>() < COMMON_VARIANT_CHANCE {
+            let (pattern, base_color, pattern_color) =
+                COMMON_VARIANTS[rng.random_range(0..COMMON_VARIANTS.len())];
+            let packed_variant = pack_variant(pattern, base_color, pattern_color);
+            self.set_variant(packed_variant);
+            return Some(SpawnGroupData::TropicalFishSchool(
+                self.schooling_data.self_reference.clone(),
+                packed_variant,
+            ));
+        }
+        // TODO: vanilla also clears `isSchool` here, which `isMaxGroupSizeReached` reads to stop
+        // the natural spawner from adding more fish to the group.
+        let pattern = Pattern::VALUES[rng.random_range(0..Pattern::VALUES.len())];
+        let base_color = DyeColor::by_id(rng.random_range(0u8..16)).unwrap_or_default();
+        let pattern_color = DyeColor::by_id(rng.random_range(0u8..16)).unwrap_or_default();
+        self.set_variant(pack_variant(pattern, base_color, pattern_color));
         group_data
     }
 
     fn mob_init_data_tracker(&self) {
+        self.set_from_bucket(self.is_from_bucket());
         self.get_entity().set_synced_data(
             tracked_data::tropical_fish::DATA_ID_TYPE_VARIANT,
             VarInt(self.get_packed_variant()),
@@ -251,10 +351,12 @@ impl Mob for TropicalFishEntity {
     }
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
+        self.fish_write_nbt(nbt);
         nbt.put_int("Variant", self.get_packed_variant());
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
+        self.fish_read_nbt(nbt);
         if let Some(packed_variant) = nbt.get_int("Variant") {
             self.set_variant(packed_variant);
         }

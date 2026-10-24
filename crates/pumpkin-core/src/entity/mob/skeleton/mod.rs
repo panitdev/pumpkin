@@ -67,10 +67,6 @@ macro_rules! skeleton_mob {
                 self.entity.on_attack(target);
             }
 
-            fn can_be_affected(&self, effect: &pumpkin_data::potion::Effect) -> bool {
-                self.entity.can_be_affected(effect)
-            }
-
             fn mob_interact(
                 &self,
                 player: &std::sync::Arc<$crate::entity::player::Player>,
@@ -164,16 +160,8 @@ impl SkeletonEntityBase {
         }
 
         {
-            let mut goal_selector = mob_arc
-                .mob_entity
-                .goals_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let mut target_selector = mob_arc
-                .mob_entity
-                .target_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let goal_selector = &mob_arc.mob_entity.goals_selector;
+            let target_selector = &mob_arc.mob_entity.target_selector;
 
             if kind == SkeletonKind::WitherSkeleton {
                 // AbstractPiglin targets
@@ -269,11 +257,7 @@ impl SkeletonEntityBase {
             return;
         }
 
-        let mut goal_selector = self
-            .mob_entity
-            .goals_selector
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let goal_selector = &self.mob_entity.goals_selector;
         goal_selector.remove_goal::<MeleeAttackGoal>(self);
         goal_selector.remove_goal::<BowAttackGoal>(self);
         if uses_bow {
@@ -607,12 +591,8 @@ impl Mob for SkeletonEntityBase {
         {
             return self.shear(player);
         }
-        self.mob_entity.mob_interact(player, item_stack)
-    }
-
-    /// Vanilla `WitherSkeleton.canBeAffected`.
-    fn can_be_affected(&self, effect: &Effect) -> bool {
-        !(self.kind == SkeletonKind::WitherSkeleton && effect.effect_type == &StatusEffect::WITHER)
+        self.mob_entity
+            .mob_interact(player, item_stack, self.can_be_leashed())
     }
 
     /// Vanilla `Monster.getWalkTargetValue`: monsters prefer dark places.

@@ -50,7 +50,7 @@ impl Mob for CaveSpiderEntity {
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {
         if self.mob_entity.living_entity.entity.is_alive() {
-            tick_climbing(&self.mob_entity, &self.is_climbing);
+            tick_climbing(self, &self.is_climbing);
         }
     }
 

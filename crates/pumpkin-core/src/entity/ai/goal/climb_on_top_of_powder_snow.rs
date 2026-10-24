@@ -30,9 +30,10 @@ impl Goal for ClimbOnTopOfPowderSnowGoal {
 
     fn tick(&mut self, mob: &dyn Mob) {
         mob.get_mob_entity()
-            .living_entity
-            .jumping
-            .store(true, Relaxed);
+            .jump_control
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .jump();
     }
 
     fn should_run_every_tick(&self) -> bool {

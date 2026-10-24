@@ -109,7 +109,7 @@ fn set_moisture(args: &RandomTickArgs<'_>, mut props: FarmlandProperties, mut ne
     args.world.set_block_state(
         args.position,
         props.to_state_id(args.block),
-        BlockFlags::NOTIFY_NEIGHBORS,
+        BlockFlags::NOTIFY_LISTENERS,
     );
 }
 

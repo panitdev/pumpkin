@@ -210,6 +210,18 @@ impl BlockEntity for JukeboxBlockEntity {
         }
     }
 
+    fn bedrock_block_actor_data(
+        &self,
+        _state_id: pumpkin_data::BlockStateId,
+    ) -> Option<NbtCompound> {
+        let ticks = self.lock_song_player().ticks_since_song_started;
+        Some(crate::block::entities::bedrock::build_jukebox_actor(
+            self.position,
+            Some(&self.lock_record()),
+            ticks,
+        ))
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -516,5 +528,41 @@ impl Clearable for JukeboxBlockEntity {
     fn clear(&self) {
         *self.lock_record() = ItemStack::EMPTY.clone();
         self.on_inventory_changed();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity::{Entity, ai::test_support::world, passive::allay::AllayEntity};
+    use pumpkin_data::entity::EntityType;
+    use pumpkin_util::math::{vector2::Vector2, vector3::Vector3};
+
+    #[tokio::test]
+    async fn removing_the_record_through_inventory_stops_allay_dancing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        world.level.loaded_chunks.insert(
+            Vector2::new(0, 0),
+            pumpkin_world::chunk::ChunkData::empty_sync(0, 0),
+        );
+        let allay = AllayEntity::new(Entity::new(
+            world.clone(),
+            Vector3::new(1.5, 64.0, 0.5),
+            &EntityType::ALLAY,
+        ));
+        world.add_entity_silent(allay.clone());
+        let jukebox = JukeboxBlockEntity::new(BlockPos::new(0, 64, 0));
+        jukebox.set_stack(
+            0,
+            ItemStack::new(1, &pumpkin_data::item::Item::MUSIC_DISC_CAT),
+        );
+        jukebox.tick(&world);
+        assert!(allay.is_dancing());
+        jukebox.remove_stack(0);
+        assert!(!allay.is_dancing());
+        world.level.shutdown().await;
+        Ok(())
     }
 }

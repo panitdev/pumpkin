@@ -26,7 +26,10 @@ use crate::block::blocks::turtle_egg::TurtleEggBlock;
 use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
-    ai::control::{Control, MoveControlTrait, move_control::MoveControl},
+    ai::control::{
+        Control, MoveControlTrait,
+        move_control::{MoveControl, Operation},
+    },
     ai::goal::{
         Controls, Goal, ParentHandle,
         breed::BreedGoal,
@@ -37,7 +40,7 @@ use crate::entity::{
         to_goal_ticks,
         wander_around::WanderAroundGoal,
     },
-    ai::pathfinder::{Navigator, NavigatorGoal, path::Path},
+    ai::pathfinder::{Navigator, NavigatorGoal},
     ai::util::default_random_pos,
     experience_orb::ExperienceOrbEntity,
     mob::{Mob, MobEntity, spawn::SpawnGroupData},
@@ -102,11 +105,7 @@ impl TurtleEntity {
             Box::new(TurtleMoveControl::default());
 
         {
-            let mut goal_selector = mob_arc
-                .mob_entity
-                .goals_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let goal_selector = &mob_arc.mob_entity.goals_selector;
 
             goal_selector.add_goal(0, TurtlePanicGoal::new(1.2));
             goal_selector.add_goal(1, TurtleBreedGoal::new(1.0));
@@ -279,12 +278,13 @@ impl Mob for TurtleEntity {
     }
 
     /// Vanilla `Turtle.isPushedByFluid`.
-    fn is_pushed_by_fluids(&self) -> bool {
+    fn mob_is_pushed_by_fluids(&self) -> bool {
         false
     }
 
     /// Vanilla `Turtle.travelInWater`: faster than the generic water travel, drifts toward home.
-    fn travel_in_water(&self, caller: &dyn EntityBase, movement_input: Vector3<f64>) -> bool {
+    fn travel_in_water(&self, caller: &dyn EntityBase, _gravity: f64, _falling: bool) {
+        let movement_input = self.get_mob_entity().living_entity.movement_input.load();
         let entity = self.get_entity();
         entity.update_velocity_from_input(movement_input, 0.1);
         entity.move_entity(caller, entity.velocity.load());
@@ -297,7 +297,6 @@ impl Mob for TurtleEntity {
             velocity.y -= 0.005;
         }
         entity.velocity.store(velocity);
-        true
     }
 
     fn get_walk_target_value(&self, pos: &BlockPos) -> f32 {
@@ -313,8 +312,7 @@ impl Mob for TurtleEntity {
     }
 
     /// Vanilla `Turtle.TurtlePathNavigation.isStableDestination`.
-    fn is_stable_destination(&self, pos: &BlockPos) -> bool {
-        let world = self.get_entity().world.load();
+    fn is_stable_destination(&self, world: &World, pos: &BlockPos) -> bool {
         if self.travel_pos().is_some() {
             world.get_block(pos).id == Block::WATER.id
         } else {
@@ -323,8 +321,6 @@ impl Mob for TurtleEntity {
     }
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {
-        self.ageable_ai_step();
-
         // Vanilla `Turtle.aiStep`: sand dust while the lay-egg counter ticks.
         let entity = self.get_entity();
         if entity.is_alive()
@@ -965,12 +961,8 @@ impl Goal for TurtleRandomStrollGoal {
 }
 
 /// Vanilla `Turtle.TurtleMoveControl`: adjusts the swim/land speed and adds water buoyancy.
-///
-/// Pumpkin's amphibious navigator writes the movement input directly, so the next path node stands
-/// in for the wanted position vanilla's navigation hands to the move control.
 #[derive(Default)]
 pub struct TurtleMoveControl {
-    speed: f32,
     inner: MoveControl,
 }
 
@@ -978,21 +970,23 @@ impl Control for TurtleMoveControl {}
 
 impl TurtleMoveControl {
     /// Vanilla `TurtleMoveControl.updateSpeed`.
-    fn update_speed(&mut self, mob: &dyn Mob, turtle: &TurtleEntity) {
-        let entity = &mob.get_mob_entity().living_entity.entity;
+    fn update_speed(mob: &dyn Mob, turtle: &TurtleEntity) {
+        let mob_entity = mob.get_mob_entity();
+        let entity = &mob_entity.living_entity.entity;
+        let speed = || mob_entity.living_entity.get_speed();
         if entity.is_in_water() {
             let velocity = entity.velocity.load();
             entity
                 .velocity
                 .store(Vector3::new(velocity.x, velocity.y + 0.005, velocity.z));
             if !closer_to_center_than(turtle.home_pos(), &entity.pos.load(), 16.0) {
-                self.speed = (self.speed / 2.0).max(0.08);
+                mob_entity.set_speed((speed() / 2.0).max(0.08));
             }
             if turtle.is_baby() {
-                self.speed = (self.speed / 3.0).max(0.06);
+                mob_entity.set_speed((speed() / 3.0).max(0.06));
             }
         } else if entity.on_ground.load(Ordering::Relaxed) {
-            self.speed = (self.speed / 2.0).max(0.06);
+            mob_entity.set_speed((speed() / 2.0).max(0.06));
         }
     }
 }
@@ -1006,64 +1000,38 @@ impl MoveControlTrait for TurtleMoveControl {
         let living_entity = &mob_entity.living_entity;
         let entity = &living_entity.entity;
 
-        self.update_speed(mob, turtle);
-
-        let (wanted, speed_modifier) = {
-            let navigator = mob_entity
-                .navigator
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if navigator.is_done() {
-                (None, 0.0)
-            } else {
-                (
-                    navigator.get_path().and_then(Path::get_next_node_pos),
-                    navigator.speed_modifier(),
-                )
-            }
-        };
-
-        let Some(wanted) = wanted else {
-            self.speed = 0.0;
-            living_entity
-                .movement_input
-                .store(Vector3::new(0.0, 0.0, 0.0));
+        Self::update_speed(mob, turtle);
+        if self.inner.operation != Operation::MoveTo || mob_entity.steered().navigator().is_done() {
+            mob_entity.set_speed(0.0);
             return;
-        };
+        }
 
         let pos = entity.pos.load();
-        let xd = f64::from(wanted.0.x) + 0.5 - pos.x;
-        let yd = f64::from(wanted.0.y) + 0.5 - pos.y;
-        let zd = f64::from(wanted.0.z) + 0.5 - pos.z;
+        let xd = self.inner.wanted_x - pos.x;
+        let yd = self.inner.wanted_y - pos.y;
+        let zd = self.inner.wanted_z - pos.z;
         let dd = (xd * xd + yd * yd + zd * zd).sqrt();
-        if dd < 1.0e-5 {
-            self.speed = 0.0;
-            living_entity
-                .movement_input
-                .store(Vector3::new(0.0, 0.0, 0.0));
+        if dd < f64::from(1.0e-5f32) {
+            mob_entity.set_speed(0.0);
             return;
         }
 
         let yd = yd / dd;
         let y_rot_d = (zd.atan2(xd).to_degrees() as f32) - 90.0;
-        let yaw = self.change_angle(entity.yaw.load(), y_rot_d, 90.0);
+        let yaw = MoveControl::rotlerp(entity.yaw.load(), y_rot_d, MoveControl::MAX_TURN);
         entity.yaw.store(yaw);
         entity.body_yaw.store(yaw);
 
-        let target_speed = (speed_modifier
+        let target_speed = (self.inner.speed_modifier
             * living_entity.get_attribute_value(&Attributes::MOVEMENT_SPEED))
             as f32;
-        // Vanilla `Mth.lerp(0.125F, this.mob.getSpeed(), targetSpeed)`.
-        let speed = 0.125f32.mul_add(target_speed - self.speed, self.speed);
-        self.speed = speed;
-        living_entity
-            .movement_input
-            .store(Vector3::new(0.0, 0.0, f64::from(speed)));
+        let speed = living_entity.get_speed();
+        mob_entity.set_speed(speed + 0.125 * (target_speed - speed));
 
         let velocity = entity.velocity.load();
         entity.velocity.store(Vector3::new(
             velocity.x,
-            velocity.y + f64::from(speed) * yd * 0.1,
+            velocity.y + f64::from(living_entity.get_speed()) * yd * 0.1,
             velocity.z,
         ));
     }

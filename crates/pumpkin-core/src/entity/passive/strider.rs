@@ -80,11 +80,7 @@ impl StriderEntity {
         drop(navigator);
 
         {
-            let mut goal_selector = mob_arc
-                .mob_entity
-                .goals_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let goal_selector = &mob_arc.mob_entity.goals_selector;
 
             goal_selector.add_goal(1, EscapeDangerGoal::new(1.65));
             goal_selector.add_goal(2, BreedGoal::new(1.0));
@@ -144,16 +140,12 @@ impl StriderEntity {
     fn is_being_tempted(&self) -> bool {
         self.mob_entity
             .goals_selector
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_goal_running::<TemptGoal>()
     }
 
     fn is_panicking(&self) -> bool {
         self.mob_entity
             .goals_selector
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_goal_running::<EscapeDangerGoal>()
     }
 
@@ -238,8 +230,6 @@ impl Mob for StriderEntity {
     }
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {
-        self.ageable_ai_step();
-
         // Vanilla `Strider.tick` sounds.
         if self.is_being_tempted() && self.get_random().random_range(0..140) == 0 {
             self.get_entity().play_sound(Sound::EntityStriderHappy);

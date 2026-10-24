@@ -100,13 +100,11 @@ pub fn register_guardian(
     state: &GuardianState,
     stroll_interval: i32,
 ) {
-    let dimension = mob_entity.living_entity.entity.entity_dimension.load();
     let mut navigator = mob_entity
         .navigator
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     *navigator = Navigator::water_bound(false);
-    navigator.set_mob_dimensions(dimension.width, dimension.height);
     navigator.set_pathfinding_malus(crate::entity::ai::pathfinder::node::PathType::Water, 0.0);
     drop(navigator);
     *mob_entity
@@ -115,10 +113,7 @@ pub fn register_guardian(
         .unwrap_or_else(std::sync::PoisonError::into_inner) =
         Box::new(GuardianMoveControl::default());
 
-    let mut goal_selector = mob_entity
-        .goals_selector
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let goal_selector = &mob_entity.goals_selector;
     goal_selector.add_goal(4, Box::new(GuardianAttackGoal::default()));
     goal_selector.add_goal(
         5,
@@ -149,29 +144,25 @@ pub fn register_guardian(
 
     // Vanilla `Guardian.GuardianAttackSelector`.
     let guardian_weak = mob_weak.clone();
-    mob_entity
-        .target_selector
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .add_goal(
-            1,
-            ActiveTargetGoal::predicated(mob_entity, 10, true, move |target, _world| {
-                let target_type = target.entity.entity_type;
-                (target_type == &EntityType::PLAYER
-                    || target_type == &EntityType::SQUID
-                    || target_type == &EntityType::GLOW_SQUID
-                    || target_type == &EntityType::AXOLOTL)
-                    && guardian_weak.upgrade().is_some_and(|guardian| {
-                        guardian
-                            .get_entity()
-                            .pos
-                            .load()
-                            .squared_distance_to_vec(&target.entity.pos.load())
-                            > MIN_TARGET_DISTANCE_SQ
-                    })
-            })
-            .including_players(),
-        );
+    mob_entity.target_selector.add_goal(
+        1,
+        ActiveTargetGoal::predicated(mob_entity, 10, true, move |target, _world| {
+            let target_type = target.entity.entity_type;
+            (target_type == &EntityType::PLAYER
+                || target_type == &EntityType::SQUID
+                || target_type == &EntityType::GLOW_SQUID
+                || target_type == &EntityType::AXOLOTL)
+                && guardian_weak.upgrade().is_some_and(|guardian| {
+                    guardian
+                        .get_entity()
+                        .pos
+                        .load()
+                        .squared_distance_to_vec(&target.entity.pos.load())
+                        > MIN_TARGET_DISTANCE_SQ
+                })
+        })
+        .including_players(),
+    );
 }
 
 /// Vanilla `Guardian.getWalkTargetValue`.
@@ -334,8 +325,8 @@ impl Mob for GuardianEntity {
         true
     }
 
-    fn travel_in_water(&self, caller: &dyn EntityBase, movement_input: Vector3<f64>) -> bool {
+    fn travel_in_water(&self, caller: &dyn EntityBase, _gravity: f64, _falling: bool) {
+        let movement_input = self.get_mob_entity().living_entity.movement_input.load();
         guardian_travel_in_water(self, caller, movement_input);
-        true
     }
 }

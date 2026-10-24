@@ -15,6 +15,10 @@ const RANDOM_SPAWN_BONUS_ID: &str = "minecraft:random_spawn_bonus";
 
 /// State shared by every mob of one spawn group (vanilla `SpawnGroupData`).
 pub enum SpawnGroupData {
+    School(std::sync::Weak<dyn EntityBase>),
+    /// Vanilla `TropicalFish.TropicalFishGroupData`: a school whose members share the packed
+    /// variant the leader rolled.
+    TropicalFishSchool(std::sync::Weak<dyn EntityBase>, i32),
     /// The effect the first spider of a group rolled on hard difficulty.
     SpiderEffects(Option<&'static StatusEffect>),
 }

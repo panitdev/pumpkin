@@ -67,16 +67,8 @@ impl BlazeEntity {
         drop(navigator);
 
         {
-            let mut goal_selector = mob_arc
-                .entity
-                .goals_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let mut target_selector = mob_arc
-                .entity
-                .target_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let goal_selector = &mob_arc.entity.goals_selector;
+            let target_selector = &mob_arc.entity.target_selector;
 
             // No swim goal: a blaze does not float, water only hurts it.
             goal_selector.add_goal(

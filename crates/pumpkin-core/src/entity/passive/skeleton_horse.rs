@@ -73,11 +73,7 @@ impl SkeletonHorseEntity {
         };
 
         {
-            let mut goal_selector = mob_arc
-                .mob_entity
-                .goals_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let goal_selector = &mob_arc.mob_entity.goals_selector;
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, EscapeDangerGoal::new(1.2));
@@ -195,8 +191,6 @@ impl Mob for SkeletonHorseEntity {
     }
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {
-        self.ageable_ai_step();
-
         // Vanilla `SkeletonHorse.aiStep`: an untethered trap horse is discarded after 15 minutes.
         if !self.mob_entity.persistence_required.load(Ordering::Relaxed)
             && self.is_trap()

@@ -115,22 +115,17 @@ pub trait SquidMob: Mob {
 
 /// Vanilla `Squid` constructor water malus and `registerGoals`.
 pub fn register_squid(mob_entity: &MobEntity) {
-    let dimension = mob_entity.living_entity.entity.entity_dimension.load();
     let mut navigator = mob_entity
         .navigator
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     *navigator = Navigator::water_bound(false);
-    navigator.set_mob_dimensions(dimension.width, dimension.height);
     navigator.set_pathfinding_malus(PathType::Water, 0.0);
     drop(navigator);
 
     // Vanilla `Squid.registerGoals` only has these two goals; it has no path navigation,
     // wander or look goals.
-    let mut goal_selector = mob_entity
-        .goals_selector
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let goal_selector = &mob_entity.goals_selector;
     goal_selector.add_goal(0, Box::new(SquidRandomMovementGoal));
     goal_selector.add_goal(1, Box::new(SquidFleeGoal::default()));
 }
@@ -469,17 +464,16 @@ impl Mob for SquidEntity {
     }
 
     fn post_tick(&self) {
-        self.ageable_ai_step();
         tick_squid(self);
         tick_ambient_sound(self);
     }
 
-    fn travel_in_water(&self, caller: &dyn EntityBase, movement_input: Vector3<f64>) -> bool {
+    fn travel_in_water(&self, caller: &dyn EntityBase, _gravity: f64, _falling: bool) {
+        let movement_input = self.get_mob_entity().living_entity.movement_input.load();
         squid_travel_in_water(self, caller, movement_input);
-        true
     }
 
-    fn is_pushed_by_fluids(&self) -> bool {
+    fn mob_is_pushed_by_fluids(&self) -> bool {
         false
     }
 

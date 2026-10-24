@@ -10,6 +10,7 @@ use crate::item::{ItemBehaviour, ItemMetadata};
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_util::Hand;
 
 pub struct FishingRodItem;
 
@@ -20,11 +21,23 @@ impl ItemMetadata for FishingRodItem {
 }
 
 impl ItemBehaviour for FishingRodItem {
+    fn normal_use(&self, item: &Item, player: &Player) {
+        let (yaw, pitch) = player.rotation();
+        self.normal_use_with_hand(item, player, yaw, pitch, Hand::Right);
+    }
+
     // FishingRodItem.use
-    fn normal_use(&self, _item: &Item, player: &Player) {
+    fn normal_use_with_hand(
+        &self,
+        _item: &Item,
+        player: &Player,
+        _yaw: f32,
+        _pitch: f32,
+        hand: Hand,
+    ) {
         let world = player.world();
         let bobber_id = player.fishing_bobber.load(Ordering::Relaxed);
-        let rod = player.inventory().held_item();
+        let rod = player.inventory().get_stack_in_hand(hand);
         let pitch = 0.4 / (rand::random::<f32>() * 0.4 + 0.8);
 
         if bobber_id == -1 {

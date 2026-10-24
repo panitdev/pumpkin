@@ -1,17 +1,21 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::{Arc, Weak};
 
+use pumpkin_data::data_component_impl::SalmonSizeImpl;
+use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::Sound;
 use pumpkin_data::tracked_data;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::var_int::VarInt;
-use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
 
+use super::abstract_fish::{self, AbstractFish, FishData, abstract_fish_impls, abstract_fish_mob};
+use super::abstract_schooling_fish::{AbstractSchoolingFish, SchoolingFishData};
+use crate::entity::ai::goal::follow_flock_leader::FollowFlockLeaderGoal;
+use crate::entity::bucketable::Bucketable;
 use crate::entity::{
     Entity, EntityBase,
     mob::{Mob, MobEntity, spawn::SpawnGroupData},
-    passive::fish::{self, AbstractFish, AbstractSchoolingFish, FishState},
 };
 
 /// Vanilla `Salmon.Variant`: the weighted sizes a salmon spawns as.
@@ -80,26 +84,26 @@ impl SalmonVariant {
 
 pub struct SalmonEntity {
     pub mob_entity: MobEntity,
-    schooling: FishState,
+    fish_data: FishData,
+    schooling_data: SchoolingFishData,
     variant: AtomicI32,
 }
 
 impl SalmonEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
-        let mob_entity = MobEntity::new(entity);
-        let salmon = Self {
+        let mut mob_entity = MobEntity::new(entity);
+        abstract_fish::initialize_fish_movement(&mut mob_entity);
+        let mob_arc = Arc::new_cyclic(|weak: &std::sync::Weak<Self>| Self {
             mob_entity,
-            schooling: FishState::default(),
+            fish_data: FishData::default(),
+            schooling_data: SchoolingFishData::new(weak.clone()),
             variant: AtomicI32::new(SalmonVariant::default().id()),
-        };
-        let mob_arc = Arc::new(salmon);
-        let entity_weak: Weak<dyn EntityBase> = {
-            let entity_arc: Arc<dyn EntityBase> = mob_arc.clone();
-            Arc::downgrade(&entity_arc)
-        };
-
-        fish::register_fish(&mob_arc.mob_entity);
-        fish::register_schooling_goals(&mob_arc.mob_entity, &entity_weak);
+        });
+        abstract_fish::register_fish_goals(&mob_arc.mob_entity);
+        mob_arc
+            .mob_entity
+            .goals_selector
+            .add_goal(5, Box::new(FollowFlockLeaderGoal::default()));
         mob_arc.apply_dimensions();
 
         mob_arc
@@ -119,23 +123,10 @@ impl SalmonEntity {
 
     /// Vanilla `Salmon.getDefaultDimensions`: the type's box scaled by the variant.
     fn apply_dimensions(&self) {
-        fish::apply_scaled_dimensions(self.get_entity(), self.get_variant().bounding_box_scale());
-    }
-}
-
-impl AbstractFish for SalmonEntity {
-    fn flop_sound(&self) -> Sound {
-        Sound::EntitySalmonFlop
-    }
-}
-
-impl AbstractSchoolingFish for SalmonEntity {
-    fn schooling(&self) -> &FishState {
-        &self.schooling
-    }
-
-    fn max_school_size(&self) -> i32 {
-        5
+        abstract_fish::apply_scaled_dimensions(
+            self.get_entity(),
+            self.get_variant().bounding_box_scale(),
+        );
     }
 }
 
@@ -144,17 +135,14 @@ impl Mob for SalmonEntity {
         &self.mob_entity
     }
 
+    abstract_fish_mob!();
+
     fn as_schooling_fish(&self) -> Option<&dyn AbstractSchoolingFish> {
         Some(self)
     }
 
-    fn mob_tick(&self, _caller: &dyn EntityBase) {
-        fish::fish_tick(self);
-    }
-
-    fn travel_in_water(&self, caller: &dyn EntityBase, movement_input: Vector3<f64>) -> bool {
-        fish::fish_travel_in_water(self, caller, movement_input);
-        true
+    fn post_tick(&self) {
+        self.schooling_tick();
     }
 
     fn finalize_spawn(
@@ -162,12 +150,19 @@ impl Mob for SalmonEntity {
         _world: &Arc<crate::world::World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        self.mob_entity.finalize_spawn_base();
         self.set_variant(SalmonVariant::random());
-        group_data
+        self.finalize_school_spawn(group_data)
+    }
+
+    /// Vanilla `Salmon.applyImplicitComponent(SALMON_SIZE)`.
+    fn mob_set_variant_name(&self, name: &str) {
+        self.set_variant(SalmonVariant::from_name(
+            name.strip_prefix("minecraft:").unwrap_or(name),
+        ));
     }
 
     fn mob_init_data_tracker(&self) {
+        self.set_from_bucket(self.is_from_bucket());
         self.get_entity().set_synced_data(
             tracked_data::salmon::DATA_TYPE,
             VarInt(self.get_variant().id()),
@@ -175,12 +170,57 @@ impl Mob for SalmonEntity {
     }
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
+        self.fish_write_nbt(nbt);
         nbt.put_string("type", self.get_variant().name().to_string());
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
+        self.fish_read_nbt(nbt);
         if let Some(name) = nbt.get_string("type") {
             self.set_variant(SalmonVariant::from_name(name));
         }
+    }
+}
+
+impl AbstractFish for SalmonEntity {
+    fn flop_sound(&self) -> Sound {
+        Sound::EntitySalmonFlop
+    }
+    fn fish_data(&self) -> &FishData {
+        &self.fish_data
+    }
+    fn ambient_sound(&self) -> Option<Sound> {
+        Some(Sound::EntitySalmonAmbient)
+    }
+}
+
+impl AbstractSchoolingFish for SalmonEntity {
+    fn schooling_data(&self) -> &SchoolingFishData {
+        &self.schooling_data
+    }
+}
+
+abstract_fish_impls!(SalmonEntity);
+
+impl Bucketable for SalmonEntity {
+    fn is_from_bucket(&self) -> bool {
+        self.fish_data.from_bucket.load(Ordering::Relaxed)
+    }
+    fn set_from_bucket(&self, from_bucket: bool) {
+        abstract_fish::set_fish_from_bucket(self, from_bucket);
+    }
+    fn bucket_item(&self) -> &'static pumpkin_data::item::Item {
+        &pumpkin_data::item::Item::SALMON_BUCKET
+    }
+    fn pickup_sound(&self) -> Sound {
+        Sound::ItemBucketFillFish
+    }
+
+    /// Vanilla `Salmon.saveToBucketTag`.
+    fn save_to_bucket_tag(&self, bucket: &mut ItemStack) {
+        crate::entity::bucketable::save_default_data_to_bucket_tag(self, bucket);
+        bucket.set_data_component(SalmonSizeImpl {
+            value: self.get_variant().name().into(),
+        });
     }
 }

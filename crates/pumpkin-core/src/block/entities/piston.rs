@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use crossbeam::atomic::AtomicCell;
 use pumpkin_data::{
-    Block, BlockDirection, BlockState,
+    Block, BlockDirection, BlockState, Property,
     block_properties::{Axis, PistonHeadLikeProperties, PistonType},
 };
 use pumpkin_nbt::compound::NbtCompound;
@@ -356,8 +356,8 @@ impl PistonBlockEntity {
             let props = props.to_props();
             if !props.is_empty() {
                 let mut props_nbt = NbtCompound::new();
-                for (key, value) in props {
-                    props_nbt.put_string(key, value.to_string());
+                for prop in props {
+                    props_nbt.put_string(prop.key_str(), prop.value_str().to_string());
                 }
                 nbt.put_compound("Properties", props_nbt);
             }
@@ -371,10 +371,10 @@ impl PistonBlockEntity {
         let Some(props) = nbt.get_compound("Properties") else {
             return Some(block.default_state);
         };
-        let props: Vec<(&str, &str)> = props
+        let props: Vec<Property> = props
             .child_tags
             .iter()
-            .filter_map(|(key, value)| Some((&**key, value.extract_string()?)))
+            .filter_map(|(key, value)| Property::from_str_pair(key, value.extract_string()?))
             .collect();
         Some(BlockState::from_id(
             block.from_properties(&props).to_state_id(block),
